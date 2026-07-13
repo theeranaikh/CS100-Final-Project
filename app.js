@@ -94,11 +94,13 @@ function logout() {
 
 function showError(elId, msg) {
   const el = document.getElementById(elId);
+  if (!el) { console.error(`showError: element #${elId} not found`, msg); return; }
   el.textContent = msg;
   el.classList.remove('hidden');
 }
 function hideError(elId) {
-  document.getElementById(elId).classList.add('hidden');
+  const el = document.getElementById(elId);
+  if (el) el.classList.add('hidden');
 }
 
 /* =====================================================
@@ -414,11 +416,13 @@ document.querySelectorAll('input[name="role"]').forEach(radio => {
 
 function afterLogin() {
   if (state.user.role === 'owner') {
-    document.getElementById('owner-name').textContent = state.user.name;
+    const ownerNameEl = document.getElementById('owner-name');
+    if (ownerNameEl) ownerNameEl.textContent = state.user.name;
     showView('view-owner-dashboard');
     startOwnerPoll();
   } else {
-    document.getElementById('driver-name').textContent = state.user.name;
+    const driverNameEl = document.getElementById('driver-name');
+    if (driverNameEl) driverNameEl.textContent = state.user.name;
     showView('view-home-driver');
     initDriverMap();
     // Get GPS position

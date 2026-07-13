@@ -96,10 +96,12 @@ function doPost(e) {
 
 function register_(body) {
   const sheet = getSheet_('Users');
+  const HEADERS = ['user_id','name','phone','plate','role','permit_type','password_hash','created_at'];
+  const phone = String(body.phone); // รักษาค่าเป็น string เสมอ
   const user = {
     user_id: uid_('u'),
     name: body.name,
-    phone: body.phone,
+    phone: phone,
     plate: body.plate || '',
     role: body.role, // 'driver' | 'owner'
     permit_type: body.permit_type || '',
@@ -108,18 +110,32 @@ function register_(body) {
     ),
     created_at: new Date().toISOString()
   };
-  appendRow_(sheet, user, ['user_id','name','phone','plate','role','permit_type','password_hash','created_at']);
+  appendRow_(sheet, user, HEADERS);
+
+  // Google Sheets auto-converts "0812345678" → 812345678 (ตัด 0 ออก)
+  // แก้ด้วยการ format เซลล์ phone เป็น text แล้ว setValue ใหม่
+  const lastRow  = sheet.getLastRow();
+  const phoneCol = HEADERS.indexOf('phone') + 1; // 1-based
+  sheet.getRange(lastRow, phoneCol)
+    .setNumberFormat('@')   // force text format
+    .setValue(phone);
+
   delete user.password_hash;
   return { ok: true, user: user };
 }
 
 function login_(body) {
   const users = sheetToObjects_(getSheet_('Users'));
-  const hash = Utilities.base64Encode(
+  const hash  = Utilities.base64Encode(
     Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, body.password)
   );
-  const found = users.find(u => u.phone === body.phone && u.password_hash === hash);
-  if (!found) return { ok: false, error: 'Invalid credentials' };
+  // normalise: ตัด leading zeros ออกก่อนเปรียบเทียบ เพื่อรองรับ Sheets ที่อาจเคยตัด 0 ไปแล้ว
+  const inputPhone = String(body.phone).replace(/^0+/, '');
+  const found = users.find(u => {
+    const storedPhone = String(u.phone).replace(/^0+/, '');
+    return storedPhone === inputPhone && u.password_hash === hash;
+  });
+  if (!found) return { ok: false, error: 'เบอร์โทรหรือรหัสผ่านไม่ถูกต้อง' };
   delete found.password_hash;
   return { ok: true, user: found };
 }
