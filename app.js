@@ -58,12 +58,15 @@ function showView(id) {
 
 /** GET or POST to Apps Script Web App */
 async function api(action, body = null) {
-  if (!API_URL) throw new Error('APPS_SCRIPT_API_URL ยังไม่ได้ตั้งค่าใน config.js');
+  if (!API_URL) throw new Error('กรุณาตั้งค่า APPS_SCRIPT_API_URL ใน config.js ก่อนใช้งาน');
   const url = `${API_URL}?action=${action}`;
+  // ใช้ text/plain เพื่อหลีกเลี่ยง CORS preflight ที่ Apps Script ไม่รองรับ
+  // Apps Script อ่าน JSON body ได้ผ่าน e.postData.contents อยู่แล้ว
   const opts = body
-    ? { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }
+    ? { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'text/plain;charset=utf-8' } }
     : { method: 'GET' };
   const res  = await fetch(url, opts);
+  if (!res.ok) throw new Error(`Server error: ${res.status}`);
   const json = await res.json();
   if (!json.ok) throw new Error(json.error || 'API error');
   return json;
