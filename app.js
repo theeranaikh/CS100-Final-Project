@@ -18,7 +18,9 @@ const MAPS_KEY         = CFG.GOOGLE_MAPS_API_KEY    || '';
 
 const BOOKING_AMOUNT   = 50;   // ฿ (ค่าบริการคงที่ตัวอย่าง)
 const ETA_DEFAULT_SEC  = 45 * 60; // 45 minutes in seconds
-const POLL_INTERVAL_MS = 5000;    // poll owner dashboard every 5 s
+const OWNER_POLL_INTERVAL_MS = 5000;
+const DRIVER_POLL_INTERVAL_MS = 3000;
+const OWNER_HEARTBEAT_INTERVAL_MS = 60000;
 
 /* =====================================================
    1. STATE
@@ -35,13 +37,18 @@ const state = {
 
   countdown:     null,    // setInterval handle
   countdownSec:  ETA_DEFAULT_SEC,
+  countdownStarted: false,
 
   stripe:        null,    // Stripe instance
   stripeElements:null,
   paymentEl:     null,    // Stripe Payment Element
   clientSecret:  null,
 
-  ownerPoll:     null,    // setInterval handle
+  driverPoll:    null,
+  driverPollBusy:false,
+  ownerPoll:     null,
+  ownerHeartbeat:null,
+  ownerPos:      null,
   selectedRating: 0,
 };
 
@@ -54,6 +61,28 @@ function showView(id) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   const el = document.getElementById(id);
   if (el) el.classList.add('active');
+  requestAnimationFrame(refreshIcons);
+}
+
+function refreshIcons() {
+  if (window.lucide) {
+    window.lucide.createIcons({ attrs: { 'aria-hidden': 'true' } });
+  }
+}
+
+function setButtonLoading(button, label) {
+  if (!button) return;
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.innerHTML = `<span class="button-spinner" aria-hidden="true"></span><span>${label}</span>`;
+}
+
+function resetButton(button, html) {
+  if (!button) return;
+  button.disabled = false;
+  button.removeAttribute('aria-busy');
+  button.innerHTML = html;
+  refreshIcons();
 }
 
 /** GET or POST to Apps Script Web App */
@@ -84,9 +113,17 @@ function loadSession() {
 }
 
 function logout() {
+  const previousUser = state.user;
+  if (previousUser && previousUser.role === 'owner') {
+    api('updateOwnerAvailability', {
+      owner_id: previousUser.user_id,
+      available: false
+    }).catch(err => console.warn('Owner availability:', err.message));
+  }
   state.user    = null;
   state.booking = null;
-  clearCountdown();
+  clearCountdown(true);
+  clearDriverPoll();
   clearOwnerPoll();
   saveSession();
   showView('view-login');
@@ -129,7 +166,7 @@ function initDriverMap() {
       center,
       zoom: 15,
       disableDefaultUI: true,
-      styles: darkMapStyle(),
+      styles: parkingMapStyle(),
     });
 
     if (state.driverPos) {
@@ -138,7 +175,7 @@ function initDriverMap() {
         map: state.mapDriver,
         title: 'ตำแหน่งของคุณ',
         icon: { path: google.maps.SymbolPath.CIRCLE, scale: 10,
-          fillColor: '#3D8BFF', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+          fillColor: '#0B7465', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3 },
       });
     }
   });
@@ -152,25 +189,28 @@ function initOwnerMap(driverLat, driverLng) {
     state.mapOwner = new google.maps.Map(container, {
       center, zoom: 15,
       disableDefaultUI: true,
-      styles: darkMapStyle(),
+      styles: parkingMapStyle(),
     });
     new google.maps.Marker({ position: center, map: state.mapOwner,
       title: 'ตำแหน่งผู้ขับขี่',
       icon: { path: google.maps.SymbolPath.CIRCLE, scale: 10,
-        fillColor: '#FF5C5C', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+        fillColor: '#E95D49', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3 },
     });
   });
 }
 
-/** Minimal dark map style matching the app palette */
-function darkMapStyle() {
+/** Quiet map styling keeps routes readable behind the booking panel. */
+function parkingMapStyle() {
   return [
-    { elementType: 'geometry', stylers: [{ color: '#1a2c4a' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#0B1E3D' }] },
-    { elementType: 'labels.text.fill', stylers: [{ color: '#7a9ec4' }] },
-    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#243c5c' }] },
-    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#182d45' }] },
-    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e1a2d' }] },
+    { elementType: 'geometry', stylers: [{ color: '#e4ebe7' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#f7f9f8' }] },
+    { elementType: 'labels.text.fill', stylers: [{ color: '#65746d' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
+    { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#d4ded9' }] },
+    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#f3e4bc' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#cbdde3' }] },
+    { featureType: 'landscape.man_made', stylers: [{ color: '#edf1ef' }] },
+    { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#d2e6d8' }] },
     { featureType: 'poi', stylers: [{ visibility: 'off' }] },
     { featureType: 'transit', stylers: [{ visibility: 'off' }] },
   ];
@@ -199,12 +239,17 @@ const CIRCUMFERENCE = 2 * Math.PI * 52; // r=52 (from SVG)
 
 function startCountdown(totalSec) {
   state.countdownSec = totalSec;
+  state.countdownStarted = true;
   const circle = document.getElementById('progress-circle');
   const minEl  = document.getElementById('countdown-min');
+  const unitEl = document.querySelector('.countdown-unit');
+  if (unitEl) unitEl.textContent = 'นาที';
 
   // Initialise stroke
-  circle.style.strokeDasharray  = CIRCUMFERENCE;
-  circle.style.strokeDashoffset = 0;
+  if (circle) {
+    circle.style.strokeDasharray  = CIRCUMFERENCE;
+    circle.style.strokeDashoffset = 0;
+  }
 
   function tick() {
     const mins = Math.floor(state.countdownSec / 60);
@@ -212,7 +257,7 @@ function startCountdown(totalSec) {
 
     // SVG progress bar (drains from full → empty)
     const progress = state.countdownSec / totalSec;
-    circle.style.strokeDashoffset = CIRCUMFERENCE * (1 - progress);
+    if (circle) circle.style.strokeDashoffset = CIRCUMFERENCE * (1 - progress);
 
     if (state.countdownSec <= 0) {
       clearCountdown();
@@ -226,16 +271,16 @@ function startCountdown(totalSec) {
   state.countdown = setInterval(tick, 1000);
 }
 
-function clearCountdown() {
+function clearCountdown(resetStarted = false) {
   if (state.countdown) { clearInterval(state.countdown); state.countdown = null; }
+  if (resetStarted) state.countdownStarted = false;
 }
 
 function onCountdownEnd() {
-  // เมื่อ 45 นาทีหมด ถือว่าเจ้าของสิทธิ์ถึงแล้ว — เปิดปุ่มชำระเงิน
   const btn  = document.getElementById('btn-proceed-payment');
   const note = document.getElementById('payment-note');
-  if (btn)  btn.disabled = false;
-  if (note) note.textContent = 'เวลาหมดแล้ว — กรุณาชำระเงิน';
+  if (btn) btn.disabled = true;
+  if (note) note.textContent = 'ใช้เวลานานกว่าที่คาด ระบบยังรอเจ้าของสิทธิ์ยืนยันว่ามาถึงแล้ว';
 }
 
 /* =====================================================
@@ -255,14 +300,15 @@ async function initStripe(clientSecret) {
 
 function stripeAppearance() {
   return {
-    theme: 'night',
+    theme: 'stripe',
     variables: {
-      colorPrimary:       '#3D8BFF',
-      colorBackground:    '#F4F7FF',
-      colorText:          '#0B1E3D',
-      colorDanger:        '#ff5c5c',
-      fontFamily:         'Poppins, sans-serif',
-      borderRadius:       '8px',
+      colorPrimary:       '#0B7465',
+      colorBackground:    '#FFFFFF',
+      colorText:          '#17211E',
+      colorDanger:        '#B83F30',
+      fontFamily:         'IBM Plex Sans Thai, sans-serif',
+      borderRadius:       '6px',
+      spacingUnit:        '4px',
     },
   };
 }
@@ -275,7 +321,8 @@ function renderHistoryItems(bookings, containerId) {
   const el = document.getElementById(containerId);
   if (!el) return;
   if (!bookings || bookings.length === 0) {
-    el.innerHTML = '<p class="history-empty">ยังไม่มีประวัติ</p>';
+    el.innerHTML = '<p class="history-empty"><i data-lucide="inbox"></i><span>ยังไม่มีประวัติการให้บริการ</span></p>';
+    refreshIcons();
     return;
   }
   el.innerHTML = bookings
@@ -297,25 +344,167 @@ function renderHistoryItems(bookings, containerId) {
         </div>`;
     })
     .join('');
+  refreshIcons();
 }
 
 function statusLabel(s) {
-  const MAP = { pending: 'รอคู่', matched: 'จับคู่แล้ว', waiting: 'กำลังรอ', completed: 'เสร็จสิ้น', cancelled: 'ยกเลิก' };
+  const MAP = { pending: 'รอจับคู่', matched: 'รอตอบรับ', waiting: 'กำลังเดินทาง', arrived: 'ถึงแล้ว', completed: 'เสร็จสิ้น', cancelled: 'ยกเลิก' };
   return MAP[s] || s;
 }
 
 /* =====================================================
-   7. OWNER POLLING
+   7. BOOKING POLLING
 ===================================================== */
+
+function showMatchingPanel(panel) {
+  const panels = {
+    searching: document.getElementById('matching-searching'),
+    found: document.getElementById('matching-found'),
+    error: document.getElementById('matching-error-state')
+  };
+  Object.entries(panels).forEach(([name, element]) => {
+    if (element) element.classList.toggle('hidden', name !== panel);
+  });
+}
+
+function showAwaitingOwnerResponse() {
+  showMatchingPanel('searching');
+  const kicker = document.getElementById('matching-kicker');
+  const title = document.getElementById('matching-search-title');
+  const desc = document.getElementById('matching-search-desc');
+  if (kicker) kicker.textContent = 'ส่งคำขอแล้ว';
+  if (title) title.innerHTML = 'กำลังรอเจ้าของสิทธิ์<br />ตอบรับคำขอ';
+  if (desc) desc.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span> ระบบจะอัปเดตทันทีเมื่อมีการตอบรับ';
+}
+
+function showOwnerTravelling(booking) {
+  showMatchingPanel('found');
+  const title = document.getElementById('matching-found-title');
+  const ownerTitle = document.getElementById('owner-progress-title');
+  const etaLabel = document.getElementById('eta-label');
+  const paymentButton = document.getElementById('btn-proceed-payment');
+  const paymentNote = document.getElementById('payment-note');
+  if (title) title.innerHTML = 'เจ้าของสิทธิ์<br />กำลังเดินทางมา';
+  if (ownerTitle) ownerTitle.textContent = 'กำลังมุ่งหน้ามาหาคุณ';
+  if (etaLabel) etaLabel.textContent = `${Number(booking.eta_minutes) || 45} นาที`;
+  if (paymentButton) paymentButton.disabled = true;
+  if (paymentNote) paymentNote.textContent = 'ระบบจะเปิดการชำระเงินเมื่อเจ้าของสิทธิ์ยืนยันว่ามาถึงแล้ว';
+  if (!state.countdownStarted) startCountdown((Number(booking.eta_minutes) || 45) * 60);
+}
+
+function showOwnerArrived() {
+  showMatchingPanel('found');
+  clearCountdown();
+  const title = document.getElementById('matching-found-title');
+  const ownerTitle = document.getElementById('owner-progress-title');
+  const minEl = document.getElementById('countdown-min');
+  const unitEl = document.querySelector('.countdown-unit');
+  const paymentButton = document.getElementById('btn-proceed-payment');
+  const paymentNote = document.getElementById('payment-note');
+  if (title) title.innerHTML = 'เจ้าของสิทธิ์<br />มาถึงแล้ว';
+  if (ownerTitle) ownerTitle.textContent = 'พร้อมส่งมอบสิทธิ์จอดให้คุณ';
+  if (minEl) minEl.textContent = '0';
+  if (unitEl) unitEl.textContent = 'ถึงแล้ว';
+  if (paymentButton) paymentButton.disabled = false;
+  if (paymentNote) paymentNote.textContent = 'ตรวจสอบสิทธิ์กับเจ้าของแล้วดำเนินการชำระเงิน';
+}
+
+function showMatchingFailure(message) {
+  clearDriverPoll();
+  clearCountdown(true);
+  showMatchingPanel('error');
+  const messageEl = document.getElementById('matching-error-message');
+  if (messageEl) messageEl.textContent = message;
+}
+
+function startDriverPoll() {
+  if (state.driverPoll) return;
+  pollDriverBooking();
+  state.driverPoll = setInterval(pollDriverBooking, DRIVER_POLL_INTERVAL_MS);
+}
+
+function clearDriverPoll() {
+  if (state.driverPoll) {
+    clearInterval(state.driverPoll);
+    state.driverPoll = null;
+  }
+  state.driverPollBusy = false;
+}
+
+async function pollDriverBooking() {
+  if (!state.booking || state.driverPollBusy) return;
+  state.driverPollBusy = true;
+  try {
+    const res = await api(`listBookings&booking_id=${encodeURIComponent(state.booking.booking_id)}`);
+    const booking = (res.data || []).find(item => String(item.booking_id) === String(state.booking.booking_id));
+    if (!booking) return;
+    state.booking = { ...state.booking, ...booking };
+
+    if (booking.status === 'matched') showAwaitingOwnerResponse();
+    if (booking.status === 'waiting') showOwnerTravelling(booking);
+    if (booking.status === 'arrived') showOwnerArrived();
+    if (booking.status === 'cancelled') {
+      state.booking = null;
+      showMatchingFailure('เจ้าของสิทธิ์ไม่สะดวกรับงาน กรุณาสร้างคำขอใหม่');
+    }
+    if (booking.status === 'completed') clearDriverPoll();
+  } catch (err) {
+    console.error('Driver poll error:', err.message);
+  } finally {
+    state.driverPollBusy = false;
+  }
+}
+
+async function restoreDriverBooking() {
+  if (!state.user || state.user.role !== 'driver') return;
+  const res = await api(`listBookings&driver_id=${encodeURIComponent(state.user.user_id)}`);
+  const active = (res.data || [])
+    .filter(booking => ['matched', 'waiting', 'arrived'].includes(booking.status))
+    .sort((a, b) => new Date(b.requested_at) - new Date(a.requested_at))[0];
+  if (!active) return;
+
+  state.booking = active;
+  state.countdownStarted = false;
+  showView('view-matching');
+  if (active.status === 'matched') showAwaitingOwnerResponse();
+  if (active.status === 'waiting') showOwnerTravelling(active);
+  if (active.status === 'arrived') showOwnerArrived();
+  startDriverPoll();
+}
+
+async function updateOwnerAvailability(available) {
+  if (!state.user || state.user.role !== 'owner') return;
+  const body = {
+    owner_id: state.user.user_id,
+    available: available
+  };
+  if (state.ownerPos) {
+    body.lat = state.ownerPos.lat;
+    body.lng = state.ownerPos.lng;
+  }
+  return api('updateOwnerAvailability', body);
+}
+
+function startOwnerHeartbeat() {
+  if (state.ownerHeartbeat) return;
+  state.ownerHeartbeat = setInterval(() => {
+    const toggle = document.getElementById('owner-available-toggle');
+    if (toggle && toggle.checked) {
+      updateOwnerAvailability(true).catch(err => console.warn('Owner heartbeat:', err.message));
+    }
+  }, OWNER_HEARTBEAT_INTERVAL_MS);
+}
 
 function startOwnerPoll() {
   if (state.ownerPoll) return;
   pollOwnerBookings(); // immediate first call
-  state.ownerPoll = setInterval(pollOwnerBookings, POLL_INTERVAL_MS);
+  state.ownerPoll = setInterval(pollOwnerBookings, OWNER_POLL_INTERVAL_MS);
+  startOwnerHeartbeat();
 }
 
 function clearOwnerPoll() {
   if (state.ownerPoll) { clearInterval(state.ownerPoll); state.ownerPoll = null; }
+  if (state.ownerHeartbeat) { clearInterval(state.ownerHeartbeat); state.ownerHeartbeat = null; }
 }
 
 async function pollOwnerBookings() {
@@ -327,17 +516,20 @@ async function pollOwnerBookings() {
     // Update history
     renderHistoryItems(bookings, 'owner-history-list');
 
-    // Check for a pending booking assigned to this owner
-    const pending = bookings.find(b => b.status === 'matched' && !state.ownerBooking);
-    if (pending && !state.ownerBooking) {
-      state.ownerBooking = pending;
-      showIncomingRequest(pending);
-    }
-
-    // If we have an active booking (waiting), show the active card
+    const incoming = bookings.find(b => b.status === 'matched');
     const active = bookings.find(b => b.status === 'waiting');
     if (active) {
+      state.ownerBooking = active;
+      document.getElementById('owner-incoming-card').classList.add('hidden');
       showActiveBookingCard(active);
+    } else if (incoming) {
+      state.ownerBooking = incoming;
+      document.getElementById('owner-active-card').classList.add('hidden');
+      showIncomingRequest(incoming);
+    } else {
+      state.ownerBooking = null;
+      document.getElementById('owner-incoming-card').classList.add('hidden');
+      document.getElementById('owner-active-card').classList.add('hidden');
     }
   } catch (err) {
     console.error('Owner poll error:', err.message);
@@ -349,13 +541,14 @@ function showIncomingRequest(booking) {
   const locEl = document.getElementById('incoming-location');
   if (!card) return;
   card.classList.remove('hidden');
-  if (locEl) locEl.textContent = `📍 ละติจูด ${Number(booking.lat).toFixed(4)}, ลองจิจูด ${Number(booking.lng).toFixed(4)}`;
+  if (locEl) locEl.textContent = `พิกัด ${Number(booking.lat).toFixed(4)}, ${Number(booking.lng).toFixed(4)}`;
 }
 
 function showActiveBookingCard(booking) {
   const card = document.getElementById('owner-active-card');
+  const shouldInitMap = card && card.classList.contains('hidden');
   if (card) card.classList.remove('hidden');
-  if (booking.lat && booking.lng) initOwnerMap(Number(booking.lat), Number(booking.lng));
+  if (shouldInitMap && booking.lat && booking.lng) initOwnerMap(Number(booking.lat), Number(booking.lng));
 }
 
 /* =====================================================
@@ -366,9 +559,11 @@ function showActiveBookingCard(booking) {
 document.getElementById('form-login').addEventListener('submit', async e => {
   e.preventDefault();
   hideError('login-error');
+  const submitButton = e.currentTarget.querySelector('button[type="submit"]');
   const phone    = document.getElementById('login-phone').value.trim();
   const password = document.getElementById('login-password').value;
   if (!phone || !password) { showError('login-error', 'กรุณากรอกข้อมูลให้ครบ'); return; }
+  setButtonLoading(submitButton, 'กำลังเข้าสู่ระบบ');
   try {
     const res  = await api('login', { phone, password });
     state.user = res.user;
@@ -376,6 +571,8 @@ document.getElementById('form-login').addEventListener('submit', async e => {
     afterLogin();
   } catch (err) {
     showError('login-error', err.message);
+  } finally {
+    resetButton(submitButton, '<span>เข้าสู่ระบบ</span><i data-lucide="arrow-right"></i>');
   }
 });
 
@@ -383,6 +580,7 @@ document.getElementById('form-login').addEventListener('submit', async e => {
 document.getElementById('form-register').addEventListener('submit', async e => {
   e.preventDefault();
   hideError('reg-error');
+  const submitButton = e.currentTarget.querySelector('button[type="submit"]');
   const name     = document.getElementById('reg-name').value.trim();
   const phone    = document.getElementById('reg-phone').value.trim();
   const password = document.getElementById('reg-password').value;
@@ -391,6 +589,7 @@ document.getElementById('form-register').addEventListener('submit', async e => {
   const permit   = document.getElementById('reg-permit').value.trim();
   if (!name || !phone || !password) { showError('reg-error', 'กรุณากรอกข้อมูลให้ครบ'); return; }
   if (password.length < 8)          { showError('reg-error', 'รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร'); return; }
+  setButtonLoading(submitButton, 'กำลังสร้างบัญชี');
   try {
     const res  = await api('register', { name, phone, password, role, plate, permit_type: permit });
     state.user = res.user;
@@ -398,6 +597,8 @@ document.getElementById('form-register').addEventListener('submit', async e => {
     afterLogin();
   } catch (err) {
     showError('reg-error', err.message);
+  } finally {
+    resetButton(submitButton, '<span>สร้างบัญชี</span><i data-lucide="arrow-right"></i>');
   }
 });
 
@@ -420,11 +621,24 @@ function afterLogin() {
     if (ownerNameEl) ownerNameEl.textContent = state.user.name;
     showView('view-owner-dashboard');
     startOwnerPoll();
+    getCurrentPosition()
+      .then(pos => { state.ownerPos = pos; })
+      .catch(err => console.warn('Owner GPS:', err.message))
+      .finally(() => {
+        updateOwnerAvailability(true).catch(err => {
+          console.error('Owner availability:', err.message);
+          renderOwnerAvailability(false, 'เชื่อมต่อสถานะรับงานไม่สำเร็จ');
+          const toggle = document.getElementById('owner-available-toggle');
+          if (toggle) toggle.checked = false;
+          clearOwnerPoll();
+        });
+      });
   } else {
     const driverNameEl = document.getElementById('driver-name');
     if (driverNameEl) driverNameEl.textContent = state.user.name;
     showView('view-home-driver');
     initDriverMap();
+    restoreDriverBooking().catch(err => console.warn('Restore booking:', err.message));
     // Get GPS position
     getCurrentPosition().then(pos => {
       state.driverPos = pos;
@@ -434,11 +648,22 @@ function afterLogin() {
         else state.driverMarker = new google.maps.Marker({
           position: pos, map: state.mapDriver,
           icon: { path: google.maps.SymbolPath.CIRCLE, scale: 10,
-            fillColor: '#3D8BFF', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+            fillColor: '#0B7465', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 3 },
         });
       }
     }).catch(err => console.warn('GPS:', err.message));
   }
+}
+
+function renderOwnerAvailability(available, noteOverride = '') {
+  const title = document.getElementById('owner-status-title');
+  const note  = document.getElementById('owner-status-note');
+  const dot   = document.getElementById('owner-status-dot');
+  if (title) title.textContent = available ? 'พร้อมรับงาน' : 'พักรับงาน';
+  if (note) note.textContent = noteOverride || (available
+    ? 'ระบบกำลังค้นหาคำขอใกล้คุณ'
+    : 'ระบบหยุดค้นหาคำขอชั่วคราว');
+  if (dot) dot.classList.toggle('is-off', !available);
 }
 
 // Logout buttons
@@ -450,8 +675,12 @@ document.getElementById('owner-logout').addEventListener('click',  logout);
 ===================================================== */
 
 /** Step 1: Driver requests parking */
-document.getElementById('btn-request-parking').addEventListener('click', async () => {
+document.getElementById('btn-request-parking').addEventListener('click', async e => {
   if (!state.user) return;
+  const requestButton = e.currentTarget;
+  setButtonLoading(requestButton, 'กำลังระบุตำแหน่ง');
+  clearDriverPoll();
+  clearCountdown(true);
   try {
     // 1. Ensure we have a GPS position
     if (!state.driverPos) {
@@ -468,8 +697,10 @@ document.getElementById('btn-request-parking').addEventListener('click', async (
 
     // 3. Go to matching screen — searching state
     showView('view-matching');
-    document.getElementById('matching-searching').classList.remove('hidden');
-    document.getElementById('matching-found').classList.add('hidden');
+    showMatchingPanel('searching');
+    document.getElementById('matching-kicker').textContent = 'กำลังจับคู่';
+    document.getElementById('matching-search-title').innerHTML = 'กำลังหาสิทธิ์จอด<br />ใกล้ตำแหน่งของคุณ';
+    document.getElementById('matching-search-desc').innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span> ตรวจสอบเจ้าของสิทธิ์ในรัศมีใกล้เคียง';
 
     // 4. Call findNearestOwner
     try {
@@ -477,23 +708,23 @@ document.getElementById('btn-request-parking').addEventListener('click', async (
       state.booking.owner_id   = match.owner_id;
       state.booking.eta_minutes = match.eta_minutes;
       state.booking.status     = 'matched';
-
-      // Show countdown
-      document.getElementById('matching-searching').classList.add('hidden');
-      document.getElementById('matching-found').classList.remove('hidden');
-      document.getElementById('eta-label').textContent = `${match.eta_minutes} นาที`;
-
-      startCountdown(match.eta_minutes * 60);
+      showAwaitingOwnerResponse();
+      startDriverPoll();
     } catch (err) {
-      // No owner available
-      document.getElementById('matching-searching').classList.add('hidden');
-      document.getElementById('matching-found').innerHTML =
-        `<p style="color:var(--error);text-align:center;padding:40px 0">${err.message}</p>
-         <button class="btn-primary btn-full" onclick="showView('view-home-driver')">กลับหน้าหลัก</button>`;
-      document.getElementById('matching-found').classList.remove('hidden');
+      const failedBooking = state.booking;
+      if (failedBooking) {
+        api('updateBookingStatus', {
+          booking_id: failedBooking.booking_id,
+          status: 'cancelled'
+        }).catch(() => {});
+      }
+      state.booking = null;
+      showMatchingFailure(err.message);
     }
   } catch (err) {
     alert('เกิดข้อผิดพลาด: ' + err.message);
+  } finally {
+    resetButton(requestButton, '<i data-lucide="navigation"></i><span>หาที่จอดด่วน</span><i data-lucide="arrow-up-right"></i>');
   }
 });
 
@@ -504,17 +735,24 @@ document.getElementById('btn-cancel-booking').addEventListener('click', async ()
     await api('updateBookingStatus', { booking_id: state.booking.booking_id, status: 'cancelled' });
   } catch { /* ignore */ }
   state.booking = null;
-  clearCountdown();
+  clearDriverPoll();
+  clearCountdown(true);
+  showView('view-home-driver');
+});
+
+document.getElementById('btn-matching-home').addEventListener('click', () => {
+  state.booking = null;
+  clearDriverPoll();
+  clearCountdown(true);
   showView('view-home-driver');
 });
 
 /** Step 3: Driver proceeds to payment */
 document.getElementById('btn-proceed-payment').addEventListener('click', async () => {
-  if (!state.booking) return;
+  if (!state.booking || state.booking.status !== 'arrived') return;
   try {
+    clearDriverPoll();
     clearCountdown();
-    await api('updateBookingStatus', { booking_id: state.booking.booking_id, status: 'waiting' });
-    state.booking.status = 'waiting';
 
     // Create Stripe PaymentIntent via Apps Script
     const res = await api('createPaymentIntent', {
@@ -538,8 +776,7 @@ document.getElementById('btn-confirm-payment').addEventListener('click', async (
   if (!state.stripe || !state.stripeElements) return;
   hideError('payment-error');
   const btn = document.getElementById('btn-confirm-payment');
-  btn.disabled = true;
-  btn.textContent = 'กำลังประมวลผล…';
+  setButtonLoading(btn, 'กำลังประมวลผล');
 
   const { error, paymentIntent } = await state.stripe.confirmPayment({
     elements: state.stripeElements,
@@ -549,8 +786,7 @@ document.getElementById('btn-confirm-payment').addEventListener('click', async (
 
   if (error) {
     showError('payment-error', error.message);
-    btn.disabled = false;
-    btn.innerHTML = '🔒 &nbsp;ชำระเงิน';
+    resetButton(btn, '<i data-lucide="lock-keyhole"></i><span>ชำระเงินอย่างปลอดภัย</span>');
     return;
   }
 
@@ -562,11 +798,16 @@ document.getElementById('btn-confirm-payment').addEventListener('click', async (
     } catch { /* non-critical */ }
     showView('view-rating');
   }
+  resetButton(btn, '<i data-lucide="lock-keyhole"></i><span>ชำระเงินอย่างปลอดภัย</span>');
 });
 
 /** Payment back button */
 document.getElementById('payment-back').addEventListener('click', () => {
   showView('view-matching');
+  if (state.booking) {
+    showOwnerArrived();
+    startDriverPoll();
+  }
 });
 
 /* =====================================================
@@ -613,6 +854,8 @@ document.getElementById('btn-submit-rating').addEventListener('click', async () 
     } catch { /* ignore */ }
   }
   state.booking = null;
+  clearDriverPoll();
+  clearCountdown(true);
   selectedRating = 0;
   document.querySelectorAll('.star').forEach(s => s.classList.remove('active'));
   showView('view-home-driver');
@@ -624,8 +867,10 @@ document.getElementById('btn-submit-rating').addEventListener('click', async () 
 ===================================================== */
 
 /** Owner accepts a booking */
-document.getElementById('btn-accept-booking').addEventListener('click', async () => {
+document.getElementById('btn-accept-booking').addEventListener('click', async e => {
   if (!state.ownerBooking) return;
+  const button = e.currentTarget;
+  setButtonLoading(button, 'กำลังรับงาน');
   try {
     await api('updateBookingStatus', { booking_id: state.ownerBooking.booking_id, status: 'waiting' });
     state.ownerBooking.status = 'waiting';
@@ -633,38 +878,60 @@ document.getElementById('btn-accept-booking').addEventListener('click', async ()
     showActiveBookingCard(state.ownerBooking);
   } catch (err) {
     alert('เกิดข้อผิดพลาด: ' + err.message);
+  } finally {
+    resetButton(button, '<i data-lucide="check"></i><span>รับงาน</span>');
   }
 });
 
 /** Owner rejects a booking */
-document.getElementById('btn-reject-booking').addEventListener('click', async () => {
+document.getElementById('btn-reject-booking').addEventListener('click', async e => {
   if (!state.ownerBooking) return;
+  const button = e.currentTarget;
+  setButtonLoading(button, 'กำลังปฏิเสธ');
   try {
     await api('updateBookingStatus', { booking_id: state.ownerBooking.booking_id, status: 'cancelled' });
-  } catch { /* ignore */ }
-  state.ownerBooking = null;
-  document.getElementById('owner-incoming-card').classList.add('hidden');
-});
-
-/** Owner marks themselves as arrived */
-document.getElementById('btn-owner-arrived').addEventListener('click', async () => {
-  if (!state.ownerBooking) return;
-  try {
-    await api('updateBookingStatus', { booking_id: state.ownerBooking.booking_id, status: 'completed' });
-    document.getElementById('owner-active-card').classList.add('hidden');
     state.ownerBooking = null;
-    alert('✅ ขอบคุณ! การให้บริการเสร็จสมบูรณ์');
+    document.getElementById('owner-incoming-card').classList.add('hidden');
   } catch (err) {
     alert('เกิดข้อผิดพลาด: ' + err.message);
+  } finally {
+    resetButton(button, '<i data-lucide="x"></i><span>ปฏิเสธ</span>');
   }
 });
 
-/** Owner availability toggle (UI only — could extend to a status field in Sheets) */
-document.getElementById('owner-available-toggle').addEventListener('change', e => {
-  if (!e.target.checked) {
-    clearOwnerPoll();
-  } else {
-    startOwnerPoll();
+/** Owner marks themselves as arrived */
+document.getElementById('btn-owner-arrived').addEventListener('click', async e => {
+  if (!state.ownerBooking) return;
+  const button = e.currentTarget;
+  setButtonLoading(button, 'กำลังยืนยัน');
+  try {
+    await api('updateBookingStatus', { booking_id: state.ownerBooking.booking_id, status: 'arrived' });
+    document.getElementById('owner-active-card').classList.add('hidden');
+    state.ownerBooking = null;
+    alert('ยืนยันการมาถึงแล้ว ระบบเปิดให้ผู้ขับขี่ชำระเงินได้');
+  } catch (err) {
+    alert('เกิดข้อผิดพลาด: ' + err.message);
+  } finally {
+    resetButton(button, '<i data-lucide="map-pin-check"></i><span>ฉันมาถึงแล้ว</span>');
+  }
+});
+
+/** Persist availability so matching only selects owners who are online. */
+document.getElementById('owner-available-toggle').addEventListener('change', async e => {
+  const toggle = e.target;
+  const available = toggle.checked;
+  toggle.disabled = true;
+  try {
+    await updateOwnerAvailability(available);
+    renderOwnerAvailability(available);
+    if (available) startOwnerPoll();
+    else clearOwnerPoll();
+  } catch (err) {
+    toggle.checked = !available;
+    renderOwnerAvailability(!available, 'อัปเดตสถานะไม่สำเร็จ กรุณาลองอีกครั้ง');
+    alert('ไม่สามารถอัปเดตสถานะรับงานได้: ' + err.message);
+  } finally {
+    toggle.disabled = false;
   }
 });
 
@@ -673,6 +940,7 @@ document.getElementById('owner-available-toggle').addEventListener('change', e =
 ===================================================== */
 
 async function boot() {
+  refreshIcons();
   // Restore session
   const saved = loadSession();
   if (saved) {

@@ -5,7 +5,7 @@ This repository contains the source code for our CS100 final project.
 ## 👥 Team Members
 - Sirinun
 - Theeranai
-- Aricha
+- Aticha
 
 ## 📌 Development Reminder
 Team, please remember to use the standard workflow when updating the code:

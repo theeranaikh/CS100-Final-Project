@@ -10,7 +10,7 @@
  *     ให้ไปตั้งใน Google Apps Script > Project Settings > Script Properties แทน
  */
 window.APP_CONFIG = {
-  APPS_SCRIPT_API_URL: 'https://script.google.com/macros/s/AKfycbyhE3sG8UCuscqh7XuC73lhYM_x6GHlK0U8lLxW2hzYoDvymVnXjiZVm8PvNsSjq7u3/exec',       // ← ใส่ URL ของ Apps Script Web App
+  APPS_SCRIPT_API_URL: 'https://script.google.com/macros/s/AKfycbyG2NQTm5w_oTrU-E_MHLfSxiobn91uhxEZ4_4mqjbInhUqd854SWCJEhicfCPzUihz/exec',       // ← ใส่ URL ของ Apps Script Web App
   STRIPE_PUBLISHABLE_KEY: 'pk_test_51Tsee8Jtg9AC5RjGKCJp9wrMeUY6RSRsT5DutVxQFfXDAGMXnpwfy9EPTJQl6dZqQsgCgjOre9zV5AQNau722THt0046XRsR1w',    // ← ใส่ pk_test_... หรือ pk_live_...
   GOOGLE_MAPS_API_KEY: 'AIzaSyDChQ__hGVj7SN5xNJiDu1GYZntEi9u2go',       // ← ใส่ Google Maps API Key
 };

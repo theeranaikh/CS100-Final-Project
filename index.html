@@ -3,325 +3,482 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Piakarn Parking Space 🅿️</title>
+  <meta name="theme-color" content="#f5f7f6" />
+  <title>Piakarn | ที่จอดพร้อม เมื่อคุณต้องการ</title>
 
-  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
-  <!-- Stripe.js -->
   <script src="https://js.stripe.com/v3/" defer></script>
-
-  <!-- App config (user fills in keys) -->
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
   <script src="config.js"></script>
-
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════
-     SPLASH / LOADING
-════════════════════════════════════════════════ -->
 <div id="view-splash" class="view active">
+  <div class="splash-route" aria-hidden="true">
+    <span class="route-node route-node-start"></span>
+    <span class="route-line"></span>
+    <span class="route-node route-node-end"></span>
+  </div>
   <div class="splash-inner">
-    <div class="splash-logo">🅿️</div>
-    <h1 class="splash-title">Piakarn</h1>
-    <p class="splash-sub">Parking Space</p>
-    <div class="spinner"></div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════
-     LOGIN
-════════════════════════════════════════════════ -->
-<div id="view-login" class="view">
-  <div class="auth-wrap">
-    <div class="auth-logo">🅿️</div>
-    <h2 class="auth-heading">ยินดีต้อนรับ</h2>
-    <p class="auth-sub">Piakarn Parking Space</p>
-
-    <form id="form-login" novalidate>
-      <label class="field-label">เบอร์โทรศัพท์</label>
-      <input id="login-phone" type="tel" class="field-input" placeholder="0812345678" autocomplete="tel" required />
-
-      <label class="field-label">รหัสผ่าน</label>
-      <input id="login-password" type="password" class="field-input" placeholder="••••••••" autocomplete="current-password" required />
-
-      <div id="login-error" class="form-error hidden"></div>
-
-      <button type="submit" class="btn-primary btn-full">เข้าสู่ระบบ</button>
-    </form>
-
-    <p class="auth-switch">ยังไม่มีบัญชี? <a href="#" id="go-register">สมัครสมาชิก</a></p>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════
-     REGISTER
-════════════════════════════════════════════════ -->
-<div id="view-register" class="view">
-  <div class="auth-wrap">
-    <button class="btn-back" id="reg-back">← กลับ</button>
-    <div class="auth-logo">🅿️</div>
-    <h2 class="auth-heading">สมัครสมาชิก</h2>
-
-    <form id="form-register" novalidate>
-      <label class="field-label">ชื่อ-นามสกุล</label>
-      <input id="reg-name" type="text" class="field-input" placeholder="สมชาย ใจดี" required />
-
-      <label class="field-label">เบอร์โทรศัพท์</label>
-      <input id="reg-phone" type="tel" class="field-input" placeholder="0812345678" required />
-
-      <label class="field-label">รหัสผ่าน</label>
-      <input id="reg-password" type="password" class="field-input" placeholder="อย่างน้อย 8 ตัวอักษร" required />
-
-      <!-- Role selector -->
-      <label class="field-label">คุณคือ</label>
-      <div class="role-selector">
-        <label class="role-card" id="role-driver-card">
-          <input type="radio" name="role" value="driver" id="role-driver" checked />
-          <span class="role-icon">🚗</span>
-          <span class="role-name">ผู้ขับขี่</span>
-          <span class="role-desc">ต้องการหาที่จอดด่วน</span>
-        </label>
-        <label class="role-card" id="role-owner-card">
-          <input type="radio" name="role" value="owner" id="role-owner" />
-          <span class="role-icon">🔑</span>
-          <span class="role-name">เจ้าของสิทธิ์</span>
-          <span class="role-desc">ปล่อยช่องจอดชั่วคราว</span>
-        </label>
-      </div>
-
-      <!-- Owner-only fields -->
-      <div id="owner-fields" class="hidden">
-        <label class="field-label">ทะเบียนรถ</label>
-        <input id="reg-plate" type="text" class="field-input" placeholder="กข 1234 กรุงเทพ" />
-
-        <label class="field-label">ประเภทสิทธิ์จอดรถ</label>
-        <input id="reg-permit" type="text" class="field-input" placeholder="เช่น VIP, คอนโด, ผู้พิการ" />
-      </div>
-
-      <div id="reg-error" class="form-error hidden"></div>
-
-      <button type="submit" class="btn-primary btn-full">สมัครสมาชิก</button>
-    </form>
-
-    <p class="auth-switch">มีบัญชีแล้ว? <a href="#" id="go-login">เข้าสู่ระบบ</a></p>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════
-     HOME — DRIVER  (แผนที่ + bottom sheet)
-════════════════════════════════════════════════ -->
-<div id="view-home-driver" class="view">
-  <!-- Top nav -->
-  <div class="top-nav">
-    <div class="top-nav-left">
-      <span class="nav-logo">🅿️</span>
-      <span class="nav-brand">Piakarn</span>
+    <div class="brand-lockup brand-lockup-large">
+      <span class="brand-mark"><i data-lucide="square-parking"></i></span>
+      <span class="brand-word">Piakarn</span>
     </div>
-    <button class="btn-logout" id="driver-logout">ออกจากระบบ</button>
+    <p class="splash-sub">PARKING, RIGHT ON TIME</p>
+    <div class="spinner" aria-label="กำลังโหลด"></div>
   </div>
+</div>
 
-  <!-- Fullscreen map -->
-  <div id="map-driver" class="map-container"></div>
+<div id="view-login" class="view auth-view">
+  <div class="auth-layout">
+    <aside class="auth-context">
+      <div class="brand-lockup">
+        <span class="brand-mark"><i data-lucide="square-parking"></i></span>
+        <span class="brand-word">Piakarn</span>
+      </div>
+      <div class="auth-map-graphic" aria-hidden="true">
+        <span class="map-road map-road-a"></span>
+        <span class="map-road map-road-b"></span>
+        <span class="map-road map-road-c"></span>
+        <span class="map-pin map-pin-a"><i data-lucide="map-pin"></i></span>
+        <span class="map-pin map-pin-b"><i data-lucide="circle-parking"></i></span>
+      </div>
+      <div class="auth-context-copy">
+        <span class="context-index">BKK / 13.7563 N</span>
+        <p>ที่จอดพร้อม<br />เมื่อคุณต้องการ</p>
+      </div>
+    </aside>
 
-  <!-- Bottom sheet card -->
-  <div class="bottom-sheet" id="bottom-sheet-driver">
-    <div class="sheet-handle"></div>
-    <div class="sheet-content">
-      <p class="sheet-greeting">สวัสดี, <strong id="driver-name">ผู้ขับขี่</strong> 👋</p>
-      <p class="sheet-hint">กดปุ่มด้านล่างเพื่อขอที่จอดฉุกเฉิน</p>
-      <button class="btn-primary btn-xl btn-icon" id="btn-request-parking">
-        🅿️ &nbsp;หาที่จอดด่วน
+    <main class="auth-wrap">
+      <div class="auth-mobile-brand brand-lockup">
+        <span class="brand-mark"><i data-lucide="square-parking"></i></span>
+        <span class="brand-word">Piakarn</span>
+      </div>
+      <p class="section-kicker">เข้าสู่ระบบ</p>
+      <h1 class="auth-heading">กลับมาแล้ว</h1>
+      <p class="auth-sub">ใช้บัญชี Piakarn ของคุณเพื่อดำเนินการต่อ</p>
+
+      <form id="form-login" novalidate>
+        <label class="field-label" for="login-phone">เบอร์โทรศัพท์</label>
+        <div class="field-control">
+          <i data-lucide="phone"></i>
+          <input id="login-phone" type="tel" class="field-input" placeholder="081 234 5678" autocomplete="tel" inputmode="tel" required />
+        </div>
+
+        <label class="field-label" for="login-password">รหัสผ่าน</label>
+        <div class="field-control">
+          <i data-lucide="lock-keyhole"></i>
+          <input id="login-password" type="password" class="field-input" placeholder="รหัสผ่านของคุณ" autocomplete="current-password" required />
+        </div>
+
+        <div id="login-error" class="form-error hidden" role="alert"></div>
+
+        <button type="submit" class="btn-primary btn-full">
+          <span>เข้าสู่ระบบ</span><i data-lucide="arrow-right"></i>
+        </button>
+      </form>
+
+      <p class="auth-switch">ยังไม่มีบัญชี? <a href="#" id="go-register">สมัครสมาชิก</a></p>
+    </main>
+  </div>
+</div>
+
+<div id="view-register" class="view auth-view">
+  <div class="auth-layout">
+    <aside class="auth-context auth-context-register">
+      <div class="brand-lockup">
+        <span class="brand-mark"><i data-lucide="square-parking"></i></span>
+        <span class="brand-word">Piakarn</span>
+      </div>
+      <div class="auth-map-graphic" aria-hidden="true">
+        <span class="map-road map-road-a"></span>
+        <span class="map-road map-road-b"></span>
+        <span class="map-road map-road-c"></span>
+        <span class="map-pin map-pin-a"><i data-lucide="car-front"></i></span>
+        <span class="map-pin map-pin-b"><i data-lucide="key-round"></i></span>
+      </div>
+      <div class="auth-context-copy">
+        <span class="context-index">TWO SIDES / ONE SPACE</span>
+        <p>แชร์สิทธิ์ที่มี<br />ให้คนที่ต้องใช้</p>
+      </div>
+    </aside>
+
+    <main class="auth-wrap auth-wrap-register">
+      <button class="btn-back" id="reg-back" type="button">
+        <i data-lucide="arrow-left"></i><span>กลับไปเข้าสู่ระบบ</span>
       </button>
-      <button class="btn-ghost btn-full" id="btn-driver-history">ประวัติการจอง</button>
-    </div>
+      <p class="section-kicker">สร้างบัญชี</p>
+      <h1 class="auth-heading">เริ่มใช้ Piakarn</h1>
+      <p class="auth-sub">เลือกบทบาทที่ตรงกับการใช้งานของคุณ</p>
+
+      <form id="form-register" novalidate>
+        <label class="field-label" for="reg-name">ชื่อ-นามสกุล</label>
+        <div class="field-control">
+          <i data-lucide="user-round"></i>
+          <input id="reg-name" type="text" class="field-input" placeholder="สมชาย ใจดี" autocomplete="name" required />
+        </div>
+
+        <label class="field-label" for="reg-phone">เบอร์โทรศัพท์</label>
+        <div class="field-control">
+          <i data-lucide="phone"></i>
+          <input id="reg-phone" type="tel" class="field-input" placeholder="081 234 5678" autocomplete="tel" inputmode="tel" required />
+        </div>
+
+        <label class="field-label" for="reg-password">รหัสผ่าน</label>
+        <div class="field-control">
+          <i data-lucide="lock-keyhole"></i>
+          <input id="reg-password" type="password" class="field-input" placeholder="8 ตัวอักษรขึ้นไป" autocomplete="new-password" required />
+        </div>
+
+        <fieldset class="role-fieldset">
+          <legend class="field-label">ใช้งานในฐานะ</legend>
+          <div class="role-selector">
+            <label class="role-card" id="role-driver-card">
+              <input type="radio" name="role" value="driver" id="role-driver" checked />
+              <span class="role-icon"><i data-lucide="car-front"></i></span>
+              <span class="role-copy">
+                <span class="role-name">ผู้ขับขี่</span>
+                <span class="role-desc">กำลังมองหาที่จอด</span>
+              </span>
+              <span class="role-check"><i data-lucide="check"></i></span>
+            </label>
+            <label class="role-card" id="role-owner-card">
+              <input type="radio" name="role" value="owner" id="role-owner" />
+              <span class="role-icon"><i data-lucide="key-round"></i></span>
+              <span class="role-copy">
+                <span class="role-name">เจ้าของสิทธิ์</span>
+                <span class="role-desc">มีช่องจอดพร้อมแบ่งปัน</span>
+              </span>
+              <span class="role-check"><i data-lucide="check"></i></span>
+            </label>
+          </div>
+        </fieldset>
+
+        <div id="owner-fields" class="owner-fields hidden">
+          <label class="field-label" for="reg-plate">ทะเบียนรถ</label>
+          <div class="field-control">
+            <i data-lucide="rectangle-horizontal"></i>
+            <input id="reg-plate" type="text" class="field-input" placeholder="กข 1234 กรุงเทพ" />
+          </div>
+
+          <label class="field-label" for="reg-permit">ประเภทสิทธิ์จอดรถ</label>
+          <div class="field-control">
+            <i data-lucide="badge-check"></i>
+            <input id="reg-permit" type="text" class="field-input" placeholder="เช่น VIP, คอนโด, ผู้พิการ" />
+          </div>
+        </div>
+
+        <div id="reg-error" class="form-error hidden" role="alert"></div>
+
+        <button type="submit" class="btn-primary btn-full">
+          <span>สร้างบัญชี</span><i data-lucide="arrow-right"></i>
+        </button>
+      </form>
+
+      <p class="auth-switch">มีบัญชีแล้ว? <a href="#" id="go-login">เข้าสู่ระบบ</a></p>
+    </main>
   </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════
-     MATCHING — กำลังจับคู่ / นับถอยหลัง 45 นาที
-════════════════════════════════════════════════ -->
-<div id="view-matching" class="view">
-  <div class="top-nav">
-    <div class="top-nav-left">
-      <span class="nav-logo">🅿️</span>
-      <span class="nav-brand">Piakarn</span>
+<div id="view-home-driver" class="view map-view">
+  <header class="top-nav">
+    <div class="top-nav-left brand-lockup">
+      <span class="brand-mark"><i data-lucide="square-parking"></i></span>
+      <span class="brand-word">Piakarn</span>
     </div>
-    <button class="btn-ghost-sm" id="btn-cancel-booking">ยกเลิก</button>
-  </div>
+    <div class="top-nav-actions">
+      <span class="location-status"><span class="status-dot"></span>ตำแหน่งปัจจุบัน</span>
+      <button class="icon-button danger-button" id="driver-logout" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">
+        <i data-lucide="log-out"></i>
+      </button>
+    </div>
+  </header>
 
-  <div class="matching-body">
+  <main id="map-driver" class="map-container" aria-label="แผนที่ตำแหน่งปัจจุบัน"></main>
+
+  <section class="bottom-sheet" id="bottom-sheet-driver" aria-label="ค้นหาที่จอดรถ">
+    <div class="sheet-accent" aria-hidden="true"></div>
+    <div class="sheet-content">
+      <div class="sheet-meta">
+        <span class="sheet-status"><span class="status-dot"></span>พร้อมค้นหา</span>
+        <span class="sheet-code">BKK / LIVE</span>
+      </div>
+      <p class="sheet-greeting">สวัสดี, <strong id="driver-name">ผู้ขับขี่</strong></p>
+      <h1 class="sheet-title">ต้องการที่จอด<br />ตอนนี้ใช่ไหม?</h1>
+      <button class="btn-primary btn-xl btn-icon" id="btn-request-parking" type="button">
+        <i data-lucide="navigation"></i><span>หาที่จอดด่วน</span><i data-lucide="arrow-up-right"></i>
+      </button>
+      <button class="btn-secondary btn-full" id="btn-driver-history" type="button">
+        <i data-lucide="history"></i><span>ดูประวัติการจอง</span>
+      </button>
+    </div>
+  </section>
+</div>
+
+<div id="view-matching" class="view workflow-view">
+  <header class="top-nav top-nav-light">
+    <div class="top-nav-left brand-lockup">
+      <span class="brand-mark"><i data-lucide="square-parking"></i></span>
+      <span class="brand-word">Piakarn</span>
+    </div>
+    <button class="btn-text-danger" id="btn-cancel-booking" type="button">
+      <i data-lucide="x"></i><span>ยกเลิกคำขอ</span>
+    </button>
+  </header>
+
+  <main class="matching-body">
     <div id="matching-searching" class="matching-state">
-      <div class="pulse-ring"></div>
-      <div class="pulse-dot">🔍</div>
-      <h2 class="matching-title">กำลังหาเจ้าของสิทธิ์</h2>
-      <p class="matching-desc">กรุณารอสักครู่…</p>
+      <div class="radar" aria-hidden="true">
+        <span class="radar-ring radar-ring-one"></span>
+        <span class="radar-ring radar-ring-two"></span>
+        <span class="radar-sweep"></span>
+        <span class="radar-pin"><i data-lucide="navigation"></i></span>
+      </div>
+      <p class="section-kicker" id="matching-kicker">กำลังจับคู่</p>
+      <h1 class="matching-title" id="matching-search-title">กำลังหาสิทธิ์จอด<br />ใกล้ตำแหน่งของคุณ</h1>
+      <p class="matching-desc" id="matching-search-desc"><span class="loading-dots"><span></span><span></span><span></span></span> ตรวจสอบเจ้าของสิทธิ์ในรัศมีใกล้เคียง</p>
     </div>
 
     <div id="matching-found" class="matching-state hidden">
-      <!-- Progress ring (SVG countdown) -->
-      <div class="countdown-wrap">
-        <svg class="progress-ring" viewBox="0 0 120 120">
-          <circle class="progress-ring__bg" cx="60" cy="60" r="52" />
-          <circle class="progress-ring__bar" id="progress-circle" cx="60" cy="60" r="52" />
-        </svg>
-        <div class="countdown-center">
-          <span class="countdown-min" id="countdown-min">45</span>
-          <span class="countdown-unit">นาที</span>
+      <p class="section-kicker section-kicker-success"><i data-lucide="circle-check"></i> จับคู่สำเร็จ</p>
+      <h1 class="matching-title" id="matching-found-title">เจ้าของสิทธิ์<br />กำลังเดินทางมา</h1>
+
+      <div class="arrival-ticket">
+        <div class="countdown-wrap">
+          <svg class="progress-ring" viewBox="0 0 120 120" role="img" aria-label="เวลาที่คาดว่าจะมาถึง">
+            <circle class="progress-ring__bg" cx="60" cy="60" r="52" />
+            <circle class="progress-ring__bar" id="progress-circle" cx="60" cy="60" r="52" />
+          </svg>
+          <div class="countdown-center">
+            <span class="countdown-min" id="countdown-min">45</span>
+            <span class="countdown-unit">นาที</span>
+          </div>
+        </div>
+
+        <div class="owner-info-card">
+          <span class="owner-card-icon"><i data-lucide="car-front"></i></span>
+          <div>
+            <h2 class="owner-card-title" id="owner-progress-title">กำลังมุ่งหน้ามาหาคุณ</h2>
+            <p class="owner-card-eta">คาดว่าจะถึงใน <strong id="eta-label">45 นาที</strong></p>
+          </div>
+          <span class="live-pill"><span class="status-dot"></span>LIVE</span>
         </div>
       </div>
 
-      <div class="owner-info-card">
-        <h3 class="owner-card-title">เจ้าของสิทธิ์กำลังเดินทางมา</h3>
-        <p class="owner-card-eta">ETA: <strong id="eta-label">45 นาที</strong></p>
-        <p class="owner-card-hint">รอรับสิทธิ์จอดที่ตำแหน่งของคุณ</p>
-      </div>
-
-      <button class="btn-primary btn-full" id="btn-proceed-payment" disabled>
-        ✅ &nbsp;เจ้าของมาถึงแล้ว — ชำระเงิน
+      <button class="btn-primary btn-full" id="btn-proceed-payment" type="button" disabled>
+        <i data-lucide="wallet-cards"></i><span>เจ้าของมาถึงแล้ว ชำระเงิน</span>
       </button>
-      <p class="btn-note" id="payment-note">ปุ่มนี้จะเปิดใช้งานเมื่อเจ้าของสิทธิ์ยืนยัน</p>
+      <p class="btn-note" id="payment-note">ระบบจะเปิดการชำระเงินเมื่อเจ้าของสิทธิ์ยืนยัน</p>
     </div>
-  </div>
+
+    <div id="matching-error-state" class="matching-state hidden">
+      <div class="matching-error">
+        <span class="matching-error-icon"><i data-lucide="circle-alert"></i></span>
+        <h2>ยังดำเนินการต่อไม่ได้</h2>
+        <p id="matching-error-message">ยังไม่มีเจ้าของสิทธิ์ที่พร้อมรับงาน</p>
+      </div>
+      <button class="btn-primary btn-full" id="btn-matching-home" type="button">
+        <i data-lucide="arrow-left"></i><span>กลับหน้าหลัก</span>
+      </button>
+    </div>
+  </main>
 </div>
 
-<!-- ═══════════════════════════════════════════════
-     PAYMENT — Stripe Payment Element
-════════════════════════════════════════════════ -->
-<div id="view-payment" class="view">
-  <div class="top-nav">
+<div id="view-payment" class="view workflow-view">
+  <header class="top-nav top-nav-light">
     <div class="top-nav-left">
-      <button class="btn-back-sm" id="payment-back">←</button>
-      <span class="nav-brand">ชำระเงิน</span>
+      <button class="icon-button" id="payment-back" type="button" aria-label="ย้อนกลับ" title="ย้อนกลับ">
+        <i data-lucide="arrow-left"></i>
+      </button>
+      <div>
+        <span class="nav-eyebrow">ขั้นตอนสุดท้าย</span>
+        <span class="nav-title">ชำระเงิน</span>
+      </div>
     </div>
-  </div>
+    <span class="secure-label"><i data-lucide="shield-check"></i> ปลอดภัย</span>
+  </header>
 
-  <div class="payment-body">
-    <div class="payment-summary-card">
-      <h3 class="summary-title">สรุปการจอง</h3>
+  <main class="payment-body">
+    <section class="payment-intro">
+      <p class="section-kicker">PAYMENT / 01</p>
+      <h1>ยืนยันการจอง<br />ของคุณ</h1>
+      <p>ตรวจสอบยอดและเลือกช่องทางชำระเงิน</p>
+    </section>
+
+    <section class="payment-summary-card">
+      <div class="summary-header">
+        <span class="summary-icon"><i data-lucide="square-parking"></i></span>
+        <div>
+          <h2 class="summary-title">สิทธิ์จอดรถ Piakarn</h2>
+          <p>การจองปัจจุบัน</p>
+        </div>
+      </div>
       <div class="summary-row">
         <span>ค่าบริการที่จอดรถ</span>
         <strong id="payment-amount-display">฿50.00</strong>
       </div>
       <div class="summary-row summary-total">
-        <span>ยอดรวม</span>
+        <span>ยอดชำระ</span>
         <strong id="payment-total-display">฿50.00</strong>
       </div>
-    </div>
+    </section>
 
-    <div class="payment-card">
-      <h3 class="payment-card-title">ข้อมูลบัตรเครดิต / ช่องทางชำระเงิน</h3>
-      <div id="stripe-payment-element">
-        <!-- Stripe Payment Element จะถูก inject ที่นี่ -->
+    <section class="payment-card">
+      <div class="payment-card-header">
+        <div>
+          <p class="section-kicker">ช่องทางชำระเงิน</p>
+          <h2 class="payment-card-title">บัตรหรือวิธีที่รองรับ</h2>
+        </div>
+        <i data-lucide="credit-card"></i>
       </div>
-      <div id="payment-error" class="form-error hidden"></div>
-      <button class="btn-primary btn-full" id="btn-confirm-payment">
-        🔒 &nbsp;ชำระเงิน
+      <div id="stripe-payment-element"></div>
+      <div id="payment-error" class="form-error hidden" role="alert"></div>
+      <button class="btn-primary btn-full" id="btn-confirm-payment" type="button">
+        <i data-lucide="lock-keyhole"></i><span>ชำระเงินอย่างปลอดภัย</span>
       </button>
-    </div>
-  </div>
+    </section>
+  </main>
 </div>
 
-<!-- ═══════════════════════════════════════════════
-     RATING
-════════════════════════════════════════════════ -->
-<div id="view-rating" class="view">
-  <div class="rating-body">
-    <div class="rating-success-icon">✅</div>
-    <h2 class="rating-title">ชำระเงินสำเร็จ!</h2>
-    <p class="rating-sub">ขอบคุณที่ใช้บริการ Piakarn</p>
+<div id="view-rating" class="view workflow-view">
+  <main class="rating-body">
+    <div class="rating-success-icon"><i data-lucide="check"></i></div>
+    <p class="section-kicker section-kicker-success">ชำระเงินสำเร็จ</p>
+    <h1 class="rating-title">ที่จอดพร้อมแล้ว</h1>
+    <p class="rating-sub">ขอบคุณที่ใช้ Piakarn</p>
 
-    <div class="rating-card">
-      <p class="rating-prompt">ให้คะแนนเจ้าของสิทธิ์</p>
-      <div class="stars" id="star-rating">
-        <button class="star" data-value="1">★</button>
-        <button class="star" data-value="2">★</button>
-        <button class="star" data-value="3">★</button>
-        <button class="star" data-value="4">★</button>
-        <button class="star" data-value="5">★</button>
+    <section class="rating-card">
+      <p class="rating-prompt">ประสบการณ์ครั้งนี้เป็นอย่างไร?</p>
+      <div class="stars" id="star-rating" aria-label="ให้คะแนนเจ้าของสิทธิ์">
+        <button class="star" data-value="1" type="button" aria-label="1 ดาว"><i data-lucide="star"></i></button>
+        <button class="star" data-value="2" type="button" aria-label="2 ดาว"><i data-lucide="star"></i></button>
+        <button class="star" data-value="3" type="button" aria-label="3 ดาว"><i data-lucide="star"></i></button>
+        <button class="star" data-value="4" type="button" aria-label="4 ดาว"><i data-lucide="star"></i></button>
+        <button class="star" data-value="5" type="button" aria-label="5 ดาว"><i data-lucide="star"></i></button>
       </div>
-    </div>
+    </section>
 
-    <button class="btn-primary btn-full" id="btn-submit-rating">ส่งคะแนนและกลับหน้าหลัก</button>
-  </div>
+    <button class="btn-primary btn-full" id="btn-submit-rating" type="button">
+      <span>ส่งคะแนนและกลับหน้าหลัก</span><i data-lucide="arrow-right"></i>
+    </button>
+  </main>
 </div>
 
-<!-- ═══════════════════════════════════════════════
-     OWNER DASHBOARD
-════════════════════════════════════════════════ -->
-<div id="view-owner-dashboard" class="view">
-  <div class="top-nav">
-    <div class="top-nav-left">
-      <span class="nav-logo">🅿️</span>
-      <span class="nav-brand">Dashboard เจ้าของสิทธิ์</span>
+<div id="view-owner-dashboard" class="view owner-view">
+  <header class="top-nav top-nav-light">
+    <div class="top-nav-left brand-lockup">
+      <span class="brand-mark"><i data-lucide="square-parking"></i></span>
+      <span class="brand-word">Piakarn</span>
+      <span class="nav-divider"></span>
+      <span class="nav-context">พื้นที่เจ้าของสิทธิ์</span>
     </div>
-    <button class="btn-logout" id="owner-logout">ออกจากระบบ</button>
-  </div>
+    <button class="icon-button danger-button" id="owner-logout" type="button" aria-label="ออกจากระบบ" title="ออกจากระบบ">
+      <i data-lucide="log-out"></i>
+    </button>
+  </header>
 
-  <div class="owner-body">
-    <div class="owner-status-bar">
-      <p>สวัสดี, <strong id="owner-name">เจ้าของสิทธิ์</strong></p>
-      <div class="owner-toggle-wrap">
-        <span>รับงาน</span>
+  <main class="owner-body">
+    <section class="owner-heading">
+      <div>
+        <p class="section-kicker">OWNER / LIVE DESK</p>
+        <h1>สวัสดี, <strong id="owner-name">เจ้าของสิทธิ์</strong></h1>
+        <p>ติดตามคำขอและสถานะการให้บริการวันนี้</p>
+      </div>
+      <div class="owner-status-bar">
+        <span class="owner-status-copy">
+          <span class="status-dot" id="owner-status-dot"></span>
+          <span><strong id="owner-status-title">พร้อมรับงาน</strong><small id="owner-status-note">ระบบกำลังค้นหาคำขอใกล้คุณ</small></span>
+        </span>
         <label class="toggle-switch">
-          <input type="checkbox" id="owner-available-toggle" checked />
+          <input type="checkbox" id="owner-available-toggle" checked aria-label="เปิดหรือปิดการรับงาน" />
           <span class="toggle-slider"></span>
         </label>
       </div>
-    </div>
+    </section>
 
-    <!-- Incoming request banner -->
-    <div id="owner-incoming-card" class="incoming-card hidden">
-      <div class="incoming-icon">🔔</div>
-      <div class="incoming-info">
-        <p class="incoming-title">มีคำขอใหม่!</p>
-        <p class="incoming-driver">ผู้ขับขี่ใกล้เคียงต้องการที่จอดด่วน</p>
-        <p class="incoming-location" id="incoming-location">📍 กำลังโหลดตำแหน่ง…</p>
-      </div>
-      <div class="incoming-actions">
-        <button class="btn-accept" id="btn-accept-booking">รับงาน</button>
-        <button class="btn-reject" id="btn-reject-booking">ปฏิเสธ</button>
-      </div>
-    </div>
+    <div class="owner-grid">
+      <section class="owner-workspace" aria-label="งานปัจจุบัน">
+        <div class="workspace-header">
+          <div>
+            <p class="section-kicker">งานปัจจุบัน</p>
+            <h2>คำขอใกล้คุณ</h2>
+          </div>
+          <span class="live-pill"><span class="status-dot"></span>LIVE</span>
+        </div>
 
-    <!-- Active booking card -->
-    <div id="owner-active-card" class="active-booking-card hidden">
-      <h3 class="active-card-title">งานปัจจุบัน</h3>
-      <p class="active-card-desc">กำลังเดินทางไปยังผู้ขับขี่</p>
-      <div class="active-map" id="map-owner"></div>
-      <button class="btn-primary btn-full" id="btn-owner-arrived">
-        📍 &nbsp;ฉันมาถึงแล้ว
-      </button>
-    </div>
+        <div class="owner-ready-state">
+          <span class="ready-icon"><i data-lucide="radar"></i></span>
+          <h3>กำลังรอคำขอใหม่</h3>
+          <p>เมื่อมีผู้ขับขี่ใกล้คุณ รายละเอียดจะปรากฏตรงนี้</p>
+        </div>
 
-    <!-- History list -->
-    <div class="history-section">
-      <h3 class="history-heading">ประวัติการให้บริการ</h3>
-      <div id="owner-history-list" class="history-list">
-        <p class="history-empty">ยังไม่มีประวัติ</p>
-      </div>
+        <article id="owner-incoming-card" class="incoming-card hidden">
+          <div class="incoming-topline">
+            <span class="incoming-icon"><i data-lucide="bell-ring"></i></span>
+            <span class="request-time">คำขอใหม่</span>
+          </div>
+          <div class="incoming-info">
+            <h3 class="incoming-title">ผู้ขับขี่ต้องการที่จอด</h3>
+            <p class="incoming-driver">อยู่ในพื้นที่ใกล้เคียงและรอการตอบรับ</p>
+            <p class="incoming-location" id="incoming-location">กำลังโหลดตำแหน่ง...</p>
+          </div>
+          <div class="incoming-actions">
+            <button class="btn-reject" id="btn-reject-booking" type="button"><i data-lucide="x"></i><span>ปฏิเสธ</span></button>
+            <button class="btn-accept" id="btn-accept-booking" type="button"><i data-lucide="check"></i><span>รับงาน</span></button>
+          </div>
+        </article>
+
+        <article id="owner-active-card" class="active-booking-card hidden">
+          <div class="active-card-header">
+            <div>
+              <p class="section-kicker section-kicker-success">กำลังให้บริการ</p>
+              <h3 class="active-card-title">มุ่งหน้าไปยังผู้ขับขี่</h3>
+            </div>
+            <span class="live-pill"><span class="status-dot"></span>LIVE</span>
+          </div>
+          <div class="active-map" id="map-owner" aria-label="แผนที่ตำแหน่งผู้ขับขี่"></div>
+          <button class="btn-primary btn-full" id="btn-owner-arrived" type="button">
+            <i data-lucide="map-pin-check"></i><span>ฉันมาถึงแล้ว</span>
+          </button>
+        </article>
+      </section>
+
+      <section class="history-section">
+        <div class="workspace-header">
+          <div>
+            <p class="section-kicker">ประวัติ</p>
+            <h2 class="history-heading">การให้บริการล่าสุด</h2>
+          </div>
+          <i data-lucide="history"></i>
+        </div>
+        <div id="owner-history-list" class="history-list">
+          <p class="history-empty"><i data-lucide="inbox"></i><span>ยังไม่มีประวัติการให้บริการ</span></p>
+        </div>
+      </section>
     </div>
-  </div>
+  </main>
 </div>
 
-<!-- ═══════════════════════════════════════════════
-     HISTORY MODAL (shared driver + owner)
-════════════════════════════════════════════════ -->
-<div id="modal-history" class="modal hidden">
+<div id="modal-history" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="history-title">
   <div class="modal-overlay" id="modal-overlay"></div>
-  <div class="modal-card">
-    <div class="modal-header">
-      <h3>ประวัติการจอง</h3>
-      <button class="modal-close" id="modal-close">✕</button>
-    </div>
+  <section class="modal-card">
+    <header class="modal-header">
+      <div>
+        <p class="section-kicker">ประวัติ</p>
+        <h2 id="history-title">การจองที่ผ่านมา</h2>
+      </div>
+      <button class="icon-button modal-close" id="modal-close" type="button" aria-label="ปิด" title="ปิด">
+        <i data-lucide="x"></i>
+      </button>
+    </header>
     <div id="modal-history-list" class="history-list"></div>
-  </div>
+  </section>
 </div>
 
-<!-- Google Maps (loaded dynamically from app.js) -->
 <script src="app.js"></script>
 </body>
 </html>
