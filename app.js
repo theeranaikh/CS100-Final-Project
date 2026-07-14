@@ -21,6 +21,8 @@ const ETA_DEFAULT_SEC  = 45 * 60; // 45 minutes in seconds
 const OWNER_POLL_INTERVAL_MS = 5000;
 const DRIVER_POLL_INTERVAL_MS = 3000;
 const OWNER_HEARTBEAT_INTERVAL_MS = 60000;
+const MATCH_RETRY_ATTEMPTS = 5;
+const MATCH_RETRY_INTERVAL_MS = 1500;
 
 /* =====================================================
    1. STATE
@@ -99,6 +101,26 @@ async function api(action, body = null) {
   const json = await res.json();
   if (!json.ok) throw new Error(json.error || 'API error');
   return json;
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function findNearestOwnerWithRetry(bookingId) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= MATCH_RETRY_ATTEMPTS; attempt++) {
+    try {
+      return await api('findNearestOwner', { booking_id: bookingId });
+    } catch (err) {
+      lastError = err;
+      const retryable = err.message.includes('ยังไม่มีเจ้าของสิทธิ์ที่พร้อมรับงาน') ||
+        err.message.includes('ระบบกำลังจับคู่คำขออื่น');
+      if (!retryable || attempt === MATCH_RETRY_ATTEMPTS) throw err;
+      await wait(MATCH_RETRY_INTERVAL_MS);
+    }
+  }
+  throw lastError;
 }
 
 /** Persist session to localStorage */
@@ -620,18 +642,23 @@ function afterLogin() {
     const ownerNameEl = document.getElementById('owner-name');
     if (ownerNameEl) ownerNameEl.textContent = state.user.name;
     showView('view-owner-dashboard');
-    startOwnerPoll();
-    getCurrentPosition()
-      .then(pos => { state.ownerPos = pos; })
-      .catch(err => console.warn('Owner GPS:', err.message))
-      .finally(() => {
-        updateOwnerAvailability(true).catch(err => {
-          console.error('Owner availability:', err.message);
-          renderOwnerAvailability(false, 'เชื่อมต่อสถานะรับงานไม่สำเร็จ');
-          const toggle = document.getElementById('owner-available-toggle');
-          if (toggle) toggle.checked = false;
-          clearOwnerPoll();
-        });
+    updateOwnerAvailability(true)
+      .then(() => {
+        renderOwnerAvailability(true);
+        startOwnerPoll();
+        getCurrentPosition()
+          .then(pos => {
+            state.ownerPos = pos;
+            return updateOwnerAvailability(true);
+          })
+          .catch(err => console.warn('Owner GPS:', err.message));
+      })
+      .catch(err => {
+        console.error('Owner availability:', err.message);
+        renderOwnerAvailability(false, 'เชื่อมต่อสถานะรับงานไม่สำเร็จ');
+        const toggle = document.getElementById('owner-available-toggle');
+        if (toggle) toggle.checked = false;
+        clearOwnerPoll();
       });
   } else {
     const driverNameEl = document.getElementById('driver-name');
@@ -702,9 +729,9 @@ document.getElementById('btn-request-parking').addEventListener('click', async e
     document.getElementById('matching-search-title').innerHTML = 'กำลังหาสิทธิ์จอด<br />ใกล้ตำแหน่งของคุณ';
     document.getElementById('matching-search-desc').innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span> ตรวจสอบเจ้าของสิทธิ์ในรัศมีใกล้เคียง';
 
-    // 4. Call findNearestOwner
+    // 4. Allow a short window for an owner who just opened the dashboard.
     try {
-      const match = await api('findNearestOwner', { booking_id: state.booking.booking_id });
+      const match = await findNearestOwnerWithRetry(state.booking.booking_id);
       state.booking.owner_id   = match.owner_id;
       state.booking.eta_minutes = match.eta_minutes;
       state.booking.status     = 'matched';
