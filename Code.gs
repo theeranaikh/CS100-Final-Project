@@ -7,6 +7,10 @@
  * ก่อน deploy ให้ตั้งค่า Script Properties (Project Settings > Script Properties):
  *   SHEET_ID              = <Google Sheet ID ที่ใช้เป็นฐานข้อมูล>
  *   STRIPE_SECRET_KEY     = sk_test_xxxxxxxx   (ห้าม commit ค่าจริงลง repo)
+ *   TWILIO_ACCOUNT_SID    = ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+ *   TWILIO_AUTH_TOKEN     = <Twilio Auth Token>
+ *   TWILIO_VERIFY_SERVICE_SID = VAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (ไม่บังคับ ระบบสร้างให้ครั้งแรก)
+ *   PASSWORD_RESET_DEMO_BYPASS = false (ไม่บังคับ; ใช้ปิด OTP demo ก่อนนำขึ้น production)
  *
  * Sheets ที่ต้องมีในไฟล์ (สร้างหัวตารางตามนี้ในแถวแรก):
  *   Users:        user_id | name | phone | plate | role | permit_type | password_hash | created_at | available | lat | lng | last_seen_at
@@ -19,6 +23,15 @@ const USER_HEADERS = ['user_id','name','phone','plate','role','permit_type','pas
 const BOOKING_HEADERS = ['booking_id','driver_id','owner_id','status','lat','lng','requested_at','matched_at','eta_minutes','owner_response_at','arrived_at','completed_at','rating'];
 const TRANSACTION_HEADERS = ['trans_id','booking_id','amount','currency','stripe_payment_intent_id','status','created_at'];
 const OWNER_ONLINE_TTL_MS = 150000;
+const BOOKING_AMOUNT_THB = 50;
+const STRIPE_API_BASE_URL = 'https://api.stripe.com/v1';
+const TWILIO_VERIFY_API_BASE_URL = 'https://verify.twilio.com/v2';
+const PASSWORD_RESET_COOLDOWN_SEC = 60;
+const PASSWORD_RESET_WINDOW_SEC = 21600;
+const PASSWORD_RESET_MAX_SENDS = 5;
+const PASSWORD_RESET_DEV_CODE = '676767';
+const PASSWORD_RESET_DEMO_BYPASS_ENABLED =
+  normalise_(PROPS.getProperty('PASSWORD_RESET_DEMO_BYPASS') || 'true') !== 'false';
 
 function getSheet_(name) {
   const sheetId = PROPS.getProperty('SHEET_ID');
@@ -122,12 +135,14 @@ function doGet(e) {
 }
 
 function doPost(e) {
-  const action = e.parameter.action;
   try {
     const body = JSON.parse((e.postData && e.postData.contents) || '{}');
+    const action = String((e.parameter && e.parameter.action) || body.action || '').trim();
     switch (action) {
       case 'register': return jsonOut_(register_(body));
       case 'login': return jsonOut_(login_(body));
+      case 'requestPasswordReset': return jsonOut_(requestPasswordReset_(body));
+      case 'resetPassword': return jsonOut_(resetPassword_(body));
       case 'requestBooking': return jsonOut_(requestBooking_(body));
       case 'findNearestOwner': return jsonOut_(findNearestOwner_(body));
       case 'updateOwnerAvailability': return jsonOut_(updateOwnerAvailability_(body));
@@ -144,6 +159,26 @@ function doPost(e) {
 
 // ---------- USERS ----------
 
+function hashPassword_(password) {
+  return Utilities.base64Encode(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(password || ''))
+  );
+}
+
+function phoneLookupKey_(value) {
+  let digits = String(value || '').replace(/\D/g, '');
+  if (digits.indexOf('66') === 0) digits = digits.slice(2);
+  return digits.replace(/^0+/, '');
+}
+
+function thaiPhoneToE164_(value) {
+  const phoneKey = phoneLookupKey_(value);
+  if (!/^[689]\d{8}$/.test(phoneKey)) {
+    throw new Error('กรุณากรอกเบอร์มือถือไทยให้ถูกต้อง');
+  }
+  return '+66' + phoneKey;
+}
+
 function register_(body) {
   const sheet = getSheet_('Users');
   const headers = ensureHeaders_(sheet, USER_HEADERS);
@@ -152,9 +187,7 @@ function register_(body) {
   if (!body.name || !phone || !body.password) return { ok: false, error: 'กรุณากรอกข้อมูลให้ครบ' };
   if (['driver', 'owner'].indexOf(role) === -1) return { ok: false, error: 'ประเภทผู้ใช้ไม่ถูกต้อง' };
 
-  const duplicate = sheetToObjects_(sheet).some(user => {
-    return String(user.phone).replace(/^0+/, '') === phone.replace(/^0+/, '');
-  });
+  const duplicate = sheetToObjects_(sheet).some(user => phoneLookupKey_(user.phone) === phoneLookupKey_(phone));
   if (duplicate) return { ok: false, error: 'เบอร์โทรนี้มีบัญชีอยู่แล้ว' };
 
   const user = {
@@ -164,9 +197,7 @@ function register_(body) {
     plate: body.plate || '',
     role: role,
     permit_type: body.permit_type || '',
-    password_hash: Utilities.base64Encode(
-      Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, body.password)
-    ),
+    password_hash: hashPassword_(body.password),
     created_at: new Date().toISOString(),
     available: false,
     lat: '',
@@ -211,18 +242,186 @@ function updateOwnerAvailability_(body) {
 
 function login_(body) {
   const users = sheetToObjects_(getSheet_('Users'));
-  const hash  = Utilities.base64Encode(
-    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, body.password)
-  );
-  // normalise: ตัด leading zeros ออกก่อนเปรียบเทียบ เพื่อรองรับ Sheets ที่อาจเคยตัด 0 ไปแล้ว
-  const inputPhone = String(body.phone).replace(/^0+/, '');
+  const hash = hashPassword_(body.password);
+  const inputPhone = phoneLookupKey_(body.phone);
   const found = users.find(u => {
-    const storedPhone = String(u.phone).replace(/^0+/, '');
+    const storedPhone = phoneLookupKey_(u.phone);
     return storedPhone === inputPhone && u.password_hash === hash;
   });
   if (!found) return { ok: false, error: 'เบอร์โทรหรือรหัสผ่านไม่ถูกต้อง' };
   delete found.password_hash;
   return { ok: true, user: found };
+}
+
+// ---------- PASSWORD RESET (Twilio Verify) ----------
+
+function requestPasswordReset_(body) {
+  let phoneE164;
+  try {
+    phoneE164 = thaiPhoneToE164_(body.phone);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+
+  const phoneKey = phoneLookupKey_(body.phone);
+  const cache = CacheService.getScriptCache();
+  const cooldownKey = 'password_reset_cooldown_' + phoneKey;
+  const windowKey = 'password_reset_window_' + phoneKey;
+  if (!PASSWORD_RESET_DEMO_BYPASS_ENABLED && cache.get(cooldownKey)) {
+    return { ok: false, error: 'กรุณารอ 60 วินาทีก่อนขอรหัสใหม่', retry_after: PASSWORD_RESET_COOLDOWN_SEC };
+  }
+
+  const sendCount = Number(cache.get(windowKey) || 0);
+  if (!PASSWORD_RESET_DEMO_BYPASS_ENABLED && sendCount >= PASSWORD_RESET_MAX_SENDS) {
+    return { ok: false, error: 'ขอรหัสยืนยันบ่อยเกินไป กรุณาลองใหม่ภายหลัง' };
+  }
+  if (!PASSWORD_RESET_DEMO_BYPASS_ENABLED) {
+    cache.put(cooldownKey, '1', PASSWORD_RESET_COOLDOWN_SEC);
+    cache.put(windowKey, String(sendCount + 1), PASSWORD_RESET_WINDOW_SEC);
+  }
+
+  const user = sheetToObjects_(getSheet_('Users'))
+    .find(item => phoneLookupKey_(item.phone) === phoneKey);
+  if (user) {
+    try {
+      sendTwilioVerification_(phoneE164);
+    } catch (err) {
+      if (PASSWORD_RESET_DEMO_BYPASS_ENABLED) {
+        return {
+          ok: true,
+          message: 'เปิดขั้นตอนยืนยันสำหรับบัญชี demo แล้ว',
+          retry_after: PASSWORD_RESET_COOLDOWN_SEC
+        };
+      }
+      // The reservation prevents concurrent sends, but a provider failure must not lock out retries.
+      cache.remove(cooldownKey);
+      if (sendCount > 0) cache.put(windowKey, String(sendCount), PASSWORD_RESET_WINDOW_SEC);
+      else cache.remove(windowKey);
+      throw err;
+    }
+  }
+
+  return {
+    ok: true,
+    message: 'หากเบอร์นี้มีบัญชี ระบบจะส่งรหัสยืนยันทาง SMS',
+    retry_after: PASSWORD_RESET_COOLDOWN_SEC
+  };
+}
+
+function resetPassword_(body) {
+  const password = String(body.password || '');
+  const code = String(body.code || '').trim();
+  if (password.length < 8) return { ok: false, error: 'รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร' };
+  if (!/^\d{4,10}$/.test(code)) return { ok: false, error: 'รหัสยืนยันไม่ถูกต้องหรือหมดอายุ' };
+
+  let phoneE164;
+  try {
+    phoneE164 = thaiPhoneToE164_(body.phone);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+
+  const sheet = getSheet_('Users');
+  const phoneKey = phoneLookupKey_(body.phone);
+  const user = sheetToObjects_(sheet)
+    .find(item => phoneLookupKey_(item.phone) === phoneKey);
+  if (!user) return { ok: false, error: 'รหัสยืนยันไม่ถูกต้องหรือหมดอายุ' };
+
+  const devBypassApproved = PASSWORD_RESET_DEMO_BYPASS_ENABLED && code === PASSWORD_RESET_DEV_CODE;
+  if (!devBypassApproved) {
+    let verification;
+    try {
+      verification = checkTwilioVerification_(phoneE164, code);
+    } catch (err) {
+      return { ok: false, error: 'รหัสยืนยันไม่ถูกต้องหรือหมดอายุ' };
+    }
+    if (verification.status !== 'approved') {
+      return { ok: false, error: 'รหัสยืนยันไม่ถูกต้องหรือหมดอายุ' };
+    }
+  }
+
+  const updated = updateRowById_(sheet, 'user_id', user.user_id, {
+    password_hash: hashPassword_(password)
+  });
+  if (!updated) return { ok: false, error: 'ไม่สามารถอัปเดตรหัสผ่านได้' };
+
+  return { ok: true, message: 'ตั้งรหัสผ่านใหม่สำเร็จ' };
+}
+
+function sendTwilioVerification_(phoneE164) {
+  const serviceSid = getTwilioVerifyServiceSid_();
+  return twilioVerifyRequest_('/Services/' + encodeURIComponent(serviceSid) + '/Verifications', {
+    To: phoneE164,
+    Channel: 'sms'
+  });
+}
+
+function checkTwilioVerification_(phoneE164, code) {
+  const serviceSid = getTwilioVerifyServiceSid_();
+  return twilioVerifyRequest_('/Services/' + encodeURIComponent(serviceSid) + '/VerificationCheck', {
+    To: phoneE164,
+    Code: code
+  });
+}
+
+function getTwilioVerifyServiceSid_() {
+  let serviceSid = String(PROPS.getProperty('TWILIO_VERIFY_SERVICE_SID') || '').trim();
+  if (serviceSid) return serviceSid;
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('ระบบ SMS กำลังเริ่มต้น กรุณาลองอีกครั้ง');
+  try {
+    serviceSid = String(PROPS.getProperty('TWILIO_VERIFY_SERVICE_SID') || '').trim();
+    if (serviceSid) return serviceSid;
+
+    const service = twilioVerifyRequest_('/Services', { FriendlyName: 'Piakarn Password Reset' });
+    if (!service.sid) throw new Error('ไม่สามารถสร้าง Twilio Verify Service ได้');
+    PROPS.setProperty('TWILIO_VERIFY_SERVICE_SID', service.sid);
+    return service.sid;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function twilioVerifyRequest_(path, payload) {
+  const accountSid = String(PROPS.getProperty('TWILIO_ACCOUNT_SID') || '').trim();
+  const authToken = String(PROPS.getProperty('TWILIO_AUTH_TOKEN') || '').trim();
+  if (!accountSid || !authToken) {
+    throw new Error('ยังไม่ได้ตั้งค่า Twilio ใน Script Properties');
+  }
+
+  const response = UrlFetchApp.fetch(TWILIO_VERIFY_API_BASE_URL + path, {
+    method: 'post',
+    contentType: 'application/x-www-form-urlencoded',
+    headers: {
+      Authorization: 'Basic ' + Utilities.base64Encode(accountSid + ':' + authToken)
+    },
+    payload: payload,
+    muteHttpExceptions: true
+  });
+
+  const responseText = response.getContentText();
+  let data;
+  try {
+    data = JSON.parse(responseText);
+  } catch (err) {
+    throw new Error('Twilio ส่งข้อมูลตอบกลับที่ไม่ถูกต้อง');
+  }
+
+  const responseCode = response.getResponseCode();
+  if (responseCode < 200 || responseCode >= 300) {
+    throw new Error(twilioErrorMessage_(data, responseCode));
+  }
+  return data;
+}
+
+function twilioErrorMessage_(data, responseCode) {
+  const message = String((data && data.message) || '');
+  const errorCode = Number(data && data.code);
+  if (errorCode === 21608 || /phone number is unverified|trial accounts cannot send/i.test(message)) {
+    return 'บัญชี Twilio แบบ Trial ส่ง SMS ได้เฉพาะเบอร์ที่ยืนยันไว้ กรุณายืนยันเบอร์ปลายทางใน Twilio Console หรืออัปเกรดบัญชี';
+  }
+  return message || 'Twilio API error (' + responseCode + ')';
 }
 
 // ---------- BOOKINGS ----------
@@ -354,42 +553,219 @@ function listBookings_(params) {
 // ---------- PAYMENTS (Stripe) ----------
 
 function createPaymentIntent_(body) {
-  const secretKey = PROPS.getProperty('STRIPE_SECRET_KEY');
-  const amountSatang = Math.round(Number(body.amount) * 100); // THB -> satang
+  const bookingId = String(body.booking_id || '').trim();
+  if (!bookingId) return { ok: false, error: 'ไม่พบรหัสการจองสำหรับชำระเงิน' };
 
-  const response = UrlFetchApp.fetch('https://api.stripe.com/v1/payment_intents', {
-    method: 'post',
-    headers: { Authorization: 'Bearer ' + secretKey },
-    payload: {
-      amount: amountSatang,
+  const bookingsSheet = getSheet_('Bookings');
+  ensureHeaders_(bookingsSheet, BOOKING_HEADERS);
+  const booking = sheetToObjects_(bookingsSheet)
+    .find(item => String(item.booking_id) === bookingId);
+  if (!booking) return { ok: false, error: 'ไม่พบคำขอจอง' };
+
+  const bookingStatus = normalise_(booking.status);
+  if (bookingStatus !== 'arrived' && bookingStatus !== 'completed') {
+    return { ok: false, error: 'การจองยังไม่พร้อมสำหรับชำระเงิน' };
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ok: false, error: 'ระบบชำระเงินกำลังประมวลผล กรุณาลองอีกครั้ง' };
+
+  try {
+    const sheet = getSheet_('Transactions');
+    const headers = ensureHeaders_(sheet, TRANSACTION_HEADERS);
+    const transactions = sheetToObjects_(sheet)
+      .filter(item => String(item.booking_id) === bookingId)
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const succeededTransaction = transactions.find(item => normalise_(item.status) === 'succeeded');
+    const pendingTransaction = transactions.find(item => normalise_(item.status) === 'pending');
+
+    if (succeededTransaction) {
+      const paidIntent = getPaymentIntent_(succeededTransaction.stripe_payment_intent_id);
+      validatePaymentIntent_(paidIntent, succeededTransaction);
+      updateRowById_(sheet, 'stripe_payment_intent_id', paidIntent.id, {
+        status: paymentStatusForSheet_(paidIntent.status)
+      });
+      if (paidIntent.status === 'succeeded') {
+        completeBookingAfterPayment_(bookingId);
+        return {
+          ok: true,
+          status: 'succeeded',
+          already_paid: true,
+          booking_id: bookingId,
+          amount: BOOKING_AMOUNT_THB
+        };
+      }
+    }
+
+    if (bookingStatus === 'completed') {
+      return { ok: false, error: 'การจองเสร็จสิ้นแล้ว แต่ไม่พบรายการชำระเงินที่สำเร็จ' };
+    }
+
+    if (pendingTransaction) {
+      const existingIntent = getPaymentIntent_(pendingTransaction.stripe_payment_intent_id);
+      validatePaymentIntent_(existingIntent, pendingTransaction);
+      const existingStatus = paymentStatusForSheet_(existingIntent.status);
+      updateRowById_(sheet, 'stripe_payment_intent_id', existingIntent.id, { status: existingStatus });
+
+      if (existingIntent.status === 'succeeded') {
+        completeBookingAfterPayment_(bookingId);
+        return {
+          ok: true,
+          status: 'succeeded',
+          already_paid: true,
+          booking_id: bookingId,
+          amount: BOOKING_AMOUNT_THB
+        };
+      }
+
+      if (existingIntent.status !== 'canceled') {
+        return {
+          ok: true,
+          status: existingIntent.status,
+          client_secret: existingIntent.client_secret,
+          payment_intent_id: existingIntent.id,
+          trans_id: pendingTransaction.trans_id,
+          amount: BOOKING_AMOUNT_THB,
+          reused: true
+        };
+      }
+    }
+
+    // Apps Script may serialize numeric form fields as "5000.0". Stripe requires an integer string.
+    const amountSatang = String(Math.round(BOOKING_AMOUNT_THB * 100));
+    const intent = stripeRequest_('/payment_intents', {
+      method: 'post',
+      headers: {
+        'Idempotency-Key': 'booking-' + bookingId + '-attempt-' + (transactions.length + 1)
+      },
+      payload: {
+        amount: amountSatang,
+        currency: 'thb',
+        description: 'Piakarn parking booking ' + bookingId,
+        'metadata[booking_id]': bookingId,
+        'automatic_payment_methods[enabled]': 'true'
+      }
+    });
+
+    const trans = {
+      trans_id: uid_('t'),
+      booking_id: bookingId,
+      amount: BOOKING_AMOUNT_THB,
       currency: 'thb',
-      'automatic_payment_methods[enabled]': 'true'
-    },
-    muteHttpExceptions: true
-  });
+      stripe_payment_intent_id: intent.id,
+      status: 'pending',
+      created_at: new Date().toISOString()
+    };
+    appendRow_(sheet, trans, headers);
 
-  const intent = JSON.parse(response.getContentText());
-  if (intent.error) return { ok: false, error: intent.error.message };
-
-  const sheet = getSheet_('Transactions');
-  const headers = ensureHeaders_(sheet, TRANSACTION_HEADERS);
-  const trans = {
-    trans_id: uid_('t'),
-    booking_id: body.booking_id,
-    amount: body.amount,
-    currency: 'thb',
-    stripe_payment_intent_id: intent.id,
-    status: 'pending',
-    created_at: new Date().toISOString()
-  };
-  appendRow_(sheet, trans, headers);
-
-  return { ok: true, client_secret: intent.client_secret, trans_id: trans.trans_id };
+    return {
+      ok: true,
+      status: intent.status,
+      client_secret: intent.client_secret,
+      payment_intent_id: intent.id,
+      trans_id: trans.trans_id,
+      amount: BOOKING_AMOUNT_THB
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function confirmPayment_(body) {
-  const ok = updateRowById_(getSheet_('Transactions'), 'stripe_payment_intent_id', body.payment_intent_id, {
-    status: body.status // 'succeeded' | 'failed'
+  const paymentIntentId = String(body.payment_intent_id || '').trim();
+  if (!paymentIntentId) return { ok: false, error: 'ไม่พบรหัสการชำระเงิน' };
+
+  const sheet = getSheet_('Transactions');
+  ensureHeaders_(sheet, TRANSACTION_HEADERS);
+  const transaction = sheetToObjects_(sheet)
+    .find(item => String(item.stripe_payment_intent_id) === paymentIntentId);
+  if (!transaction) return { ok: false, error: 'ไม่พบรายการชำระเงิน' };
+
+  const intent = getPaymentIntent_(paymentIntentId);
+  try {
+    validatePaymentIntent_(intent, transaction);
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+
+  const status = paymentStatusForSheet_(intent.status);
+  const updated = updateRowById_(sheet, 'stripe_payment_intent_id', paymentIntentId, { status: status });
+  if (!updated) return { ok: false, error: 'ไม่สามารถอัปเดตรายการชำระเงินได้' };
+
+  if (intent.status === 'succeeded') completeBookingAfterPayment_(transaction.booking_id);
+  return {
+    ok: true,
+    status: intent.status,
+    booking_id: transaction.booking_id
+  };
+}
+
+function getPaymentIntent_(paymentIntentId) {
+  if (!paymentIntentId) throw new Error('ไม่พบรหัส PaymentIntent');
+  return stripeRequest_('/payment_intents/' + encodeURIComponent(paymentIntentId));
+}
+
+function stripeRequest_(path, options) {
+  const secretKey = String(PROPS.getProperty('STRIPE_SECRET_KEY') || '').trim();
+  if (!secretKey) throw new Error('ยังไม่ได้ตั้งค่า STRIPE_SECRET_KEY ใน Script Properties');
+
+  const config = options || {};
+  const headers = Object.assign({ Authorization: 'Bearer ' + secretKey }, config.headers || {});
+  const request = {
+    method: config.method || 'get',
+    headers: headers,
+    muteHttpExceptions: true
+  };
+  if (config.payload) request.payload = config.payload;
+
+  const response = UrlFetchApp.fetch(STRIPE_API_BASE_URL + path, request);
+  const responseText = response.getContentText();
+  let data;
+  try {
+    data = JSON.parse(responseText);
+  } catch (err) {
+    throw new Error('Stripe ส่งข้อมูลตอบกลับที่ไม่ถูกต้อง');
+  }
+
+  const responseCode = response.getResponseCode();
+  if (responseCode < 200 || responseCode >= 300 || data.error) {
+    const message = data.error && data.error.message ? data.error.message : 'Stripe API error (' + responseCode + ')';
+    throw new Error(message);
+  }
+  return data;
+}
+
+function paymentStatusForSheet_(stripeStatus) {
+  if (stripeStatus === 'succeeded') return 'succeeded';
+  if (stripeStatus === 'canceled') return 'failed';
+  return 'pending';
+}
+
+function validatePaymentIntent_(intent, transaction) {
+  const expectedAmountSatang = Math.round(Number(transaction.amount) * 100);
+  if (!isFinite(expectedAmountSatang) || intent.amount !== expectedAmountSatang || normalise_(intent.currency) !== normalise_(transaction.currency)) {
+    throw new Error('ยอดเงินหรือสกุลเงินจาก Stripe ไม่ตรงกับรายการจอง');
+  }
+
+  const metadataBookingId = intent.metadata && intent.metadata.booking_id;
+  if (metadataBookingId && String(metadataBookingId) !== String(transaction.booking_id)) {
+    throw new Error('ข้อมูลการจองจาก Stripe ไม่ตรงกับรายการชำระเงิน');
+  }
+}
+
+function completeBookingAfterPayment_(bookingId) {
+  const sheet = getSheet_('Bookings');
+  ensureHeaders_(sheet, BOOKING_HEADERS);
+  const booking = sheetToObjects_(sheet)
+    .find(item => String(item.booking_id) === String(bookingId));
+  if (!booking) throw new Error('ไม่พบคำขอจองของรายการชำระเงิน');
+
+  const status = normalise_(booking.status);
+  if (status === 'completed') return true;
+  if (status !== 'arrived') throw new Error('สถานะการจองไม่พร้อมสำหรับยืนยันการชำระเงิน');
+
+  return updateRowById_(sheet, 'booking_id', bookingId, {
+    status: 'completed',
+    completed_at: new Date().toISOString()
   });
-  return { ok: ok };
 }

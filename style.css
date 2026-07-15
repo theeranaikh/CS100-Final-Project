@@ -274,6 +274,10 @@ input:focus-visible,
   background: #263f4d;
 }
 
+.auth-context-reset {
+  background: #243a35;
+}
+
 .auth-map-graphic {
   position: absolute;
   inset: 18% -13% 18% 8%;
@@ -349,6 +353,11 @@ input:focus-visible,
   padding-bottom: 44px;
 }
 
+.auth-wrap-reset {
+  padding-top: 48px;
+  padding-bottom: 48px;
+}
+
 .auth-mobile-brand {
   display: none;
 }
@@ -394,6 +403,38 @@ input:focus-visible,
   color: var(--ink-soft);
   font-size: 13px;
   font-weight: 600;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.field-label-row .field-label {
+  margin-bottom: 7px;
+}
+
+.field-label-row a,
+.btn-link {
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.field-label-row a {
+  margin-bottom: 7px;
+}
+
+.field-label-row a:hover,
+.btn-link:hover {
+  color: var(--primary-dark);
+  text-decoration: underline;
 }
 
 .field-control {
@@ -447,6 +488,58 @@ input:focus-visible,
   background: #fff0ed;
   color: var(--urgent-dark);
   font-size: 13px;
+}
+
+.form-success {
+  margin-top: 14px;
+  padding: 11px 13px;
+  border: 1px solid #a8d7c6;
+  border-radius: var(--radius-sm);
+  background: #eaf7f2;
+  color: #176149;
+  font-size: 13px;
+}
+
+.reset-phone-line strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.otp-input {
+  font-weight: 700;
+}
+
+.reset-actions {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.btn-link {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+}
+
+.btn-link svg {
+  width: 15px;
+  height: 15px;
+}
+
+.btn-link:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.resend-button {
+  min-width: 154px;
+  justify-content: flex-end;
 }
 
 .role-fieldset {
@@ -1752,6 +1845,17 @@ input:focus-visible,
 
   .btn-back {
     margin-bottom: 20px;
+  }
+
+  .reset-actions {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .resend-button {
+    min-width: 0;
+    justify-content: flex-start;
   }
 
   .role-card {

@@ -45,6 +45,7 @@ const state = {
   stripeElements:null,
   paymentEl:     null,    // Stripe Payment Element
   clientSecret:  null,
+  paymentBookingId: null,
 
   driverPoll:    null,
   driverPollBusy:false,
@@ -52,6 +53,8 @@ const state = {
   ownerHeartbeat:null,
   ownerPos:      null,
   selectedRating: 0,
+  passwordResetPhone: null,
+  passwordResetCooldown: null,
 };
 
 /* =====================================================
@@ -94,7 +97,7 @@ async function api(action, body = null) {
   // ใช้ text/plain เพื่อหลีกเลี่ยง CORS preflight ที่ Apps Script ไม่รองรับ
   // Apps Script อ่าน JSON body ได้ผ่าน e.postData.contents อยู่แล้ว
   const opts = body
-    ? { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'text/plain;charset=utf-8' } }
+    ? { method: 'POST', body: JSON.stringify({ ...body, action }), headers: { 'Content-Type': 'text/plain;charset=utf-8' } }
     : { method: 'GET' };
   const res  = await fetch(url, opts);
   if (!res.ok) throw new Error(`Server error: ${res.status}`);
@@ -144,6 +147,7 @@ function logout() {
   }
   state.user    = null;
   state.booking = null;
+  resetPaymentState();
   clearCountdown(true);
   clearDriverPoll();
   clearOwnerPoll();
@@ -160,6 +164,54 @@ function showError(elId, msg) {
 function hideError(elId) {
   const el = document.getElementById(elId);
   if (el) el.classList.add('hidden');
+}
+
+function showForgotPasswordStep(step) {
+  const requestStep = document.getElementById('forgot-step-request');
+  const resetStep = document.getElementById('forgot-step-reset');
+  if (requestStep) requestStep.classList.toggle('hidden', step !== 'request');
+  if (resetStep) resetStep.classList.toggle('hidden', step !== 'reset');
+  hideError('forgot-request-error');
+  hideError('forgot-reset-error');
+  requestAnimationFrame(refreshIcons);
+}
+
+function maskThaiPhone(phone) {
+  let digits = String(phone || '').replace(/\D/g, '');
+  if (digits.startsWith('66')) digits = digits.slice(2);
+  digits = digits.replace(/^0+/, '');
+  if (digits.length !== 9) return String(phone || '');
+  return `0${digits.slice(0, 2)} *** ${digits.slice(-4)}`;
+}
+
+function clearPasswordResetCooldown() {
+  if (state.passwordResetCooldown) {
+    clearInterval(state.passwordResetCooldown);
+    state.passwordResetCooldown = null;
+  }
+  const button = document.getElementById('forgot-resend-code');
+  const label = button && button.querySelector('span');
+  if (button) button.disabled = false;
+  if (label) label.textContent = 'ส่งรหัสอีกครั้ง';
+}
+
+function startPasswordResetCooldown(totalSeconds) {
+  clearPasswordResetCooldown();
+  const button = document.getElementById('forgot-resend-code');
+  const label = button && button.querySelector('span');
+  let remaining = Math.max(1, Number(totalSeconds) || 60);
+  if (!button || !label) return;
+
+  const render = () => {
+    button.disabled = remaining > 0;
+    label.textContent = remaining > 0 ? `ส่งใหม่ใน ${remaining} วินาที` : 'ส่งรหัสอีกครั้ง';
+  };
+  render();
+  state.passwordResetCooldown = setInterval(() => {
+    remaining--;
+    render();
+    if (remaining <= 0) clearPasswordResetCooldown();
+  }, 1000);
 }
 
 /* =====================================================
@@ -310,14 +362,44 @@ function onCountdownEnd() {
 ===================================================== */
 
 async function initStripe(clientSecret) {
-  if (!STRIPE_PUB_KEY) {
-    showError('payment-error', 'STRIPE_PUBLISHABLE_KEY ยังไม่ได้ตั้งค่าใน config.js');
-    return;
-  }
+  if (!STRIPE_PUB_KEY) throw new Error('STRIPE_PUBLISHABLE_KEY ยังไม่ได้ตั้งค่าใน config.js');
+  if (typeof window.Stripe !== 'function') throw new Error('โหลด Stripe.js ไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต');
+  if (!clientSecret) throw new Error('ไม่ได้รับ client secret จากระบบชำระเงิน');
+
   state.stripe = Stripe(STRIPE_PUB_KEY);
   state.stripeElements = state.stripe.elements({ clientSecret, appearance: stripeAppearance() });
   state.paymentEl      = state.stripeElements.create('payment');
   state.paymentEl.mount('#stripe-payment-element');
+}
+
+function resetPaymentState() {
+  if (state.paymentEl) {
+    try { state.paymentEl.destroy(); } catch { /* Element may already be detached. */ }
+  }
+  state.stripe = null;
+  state.stripeElements = null;
+  state.paymentEl = null;
+  state.clientSecret = null;
+  state.paymentBookingId = null;
+  const container = document.getElementById('stripe-payment-element');
+  if (container) container.innerHTML = '';
+}
+
+function renderPaymentAmount(amount) {
+  const value = Number(amount);
+  const formatted = Number.isFinite(value) ? value.toFixed(2) : BOOKING_AMOUNT.toFixed(2);
+  document.getElementById('payment-amount-display').textContent = `฿${formatted}`;
+  document.getElementById('payment-total-display').textContent = `฿${formatted}`;
+}
+
+function paymentStatusMessage(status) {
+  const messages = {
+    processing: 'Stripe กำลังประมวลผลรายการ กรุณารอสักครู่แล้วลองตรวจสอบอีกครั้ง',
+    requires_action: 'กรุณายืนยันการชำระเงินตามขั้นตอนของธนาคาร',
+    requires_payment_method: 'การชำระเงินไม่สำเร็จ กรุณาตรวจสอบข้อมูลหรือเลือกวิธีอื่น',
+    canceled: 'รายการชำระเงินถูกยกเลิก กรุณากลับไปเริ่มใหม่'
+  };
+  return messages[status] || 'ยังไม่สามารถยืนยันการชำระเงินได้ กรุณาลองอีกครั้ง';
 }
 
 function stripeAppearance() {
@@ -581,6 +663,7 @@ function showActiveBookingCard(booking) {
 document.getElementById('form-login').addEventListener('submit', async e => {
   e.preventDefault();
   hideError('login-error');
+  hideError('login-success');
   const submitButton = e.currentTarget.querySelector('button[type="submit"]');
   const phone    = document.getElementById('login-phone').value.trim();
   const password = document.getElementById('login-password').value;
@@ -595,6 +678,126 @@ document.getElementById('form-login').addEventListener('submit', async e => {
     showError('login-error', err.message);
   } finally {
     resetButton(submitButton, '<span>เข้าสู่ระบบ</span><i data-lucide="arrow-right"></i>');
+  }
+});
+
+document.getElementById('go-forgot-password').addEventListener('click', e => {
+  e.preventDefault();
+  clearPasswordResetCooldown();
+  state.passwordResetPhone = null;
+  hideError('login-error');
+  hideError('login-success');
+  document.getElementById('form-forgot-request').reset();
+  document.getElementById('form-forgot-reset').reset();
+  document.getElementById('forgot-phone').value = document.getElementById('login-phone').value.trim();
+  showForgotPasswordStep('request');
+  showView('view-forgot-password');
+});
+
+document.getElementById('forgot-back').addEventListener('click', () => {
+  clearPasswordResetCooldown();
+  state.passwordResetPhone = null;
+  showView('view-login');
+});
+
+document.getElementById('forgot-change-phone').addEventListener('click', () => {
+  clearPasswordResetCooldown();
+  state.passwordResetPhone = null;
+  document.getElementById('form-forgot-reset').reset();
+  showForgotPasswordStep('request');
+  document.getElementById('forgot-phone').focus();
+});
+
+document.getElementById('form-forgot-request').addEventListener('submit', async e => {
+  e.preventDefault();
+  hideError('forgot-request-error');
+  const button = e.currentTarget.querySelector('button[type="submit"]');
+  const phone = document.getElementById('forgot-phone').value.trim();
+  if (!phone) {
+    showError('forgot-request-error', 'กรุณากรอกเบอร์โทรศัพท์');
+    return;
+  }
+
+  setButtonLoading(button, 'กำลังส่งรหัส');
+  try {
+    const res = await api('requestPasswordReset', { phone });
+    state.passwordResetPhone = phone;
+    document.getElementById('forgot-phone-display').textContent = maskThaiPhone(phone);
+    showForgotPasswordStep('reset');
+    startPasswordResetCooldown(res.retry_after || 60);
+    requestAnimationFrame(() => document.getElementById('forgot-code').focus());
+  } catch (err) {
+    showError('forgot-request-error', err.message);
+  } finally {
+    resetButton(button, '<i data-lucide="message-square-more"></i><span>ส่งรหัสทาง SMS</span>');
+  }
+});
+
+document.getElementById('forgot-resend-code').addEventListener('click', async e => {
+  if (!state.passwordResetPhone) return;
+  hideError('forgot-reset-error');
+  const button = e.currentTarget;
+  let retryAfter = 0;
+  setButtonLoading(button, 'กำลังส่ง');
+  try {
+    const res = await api('requestPasswordReset', { phone: state.passwordResetPhone });
+    retryAfter = res.retry_after || 60;
+  } catch (err) {
+    showError('forgot-reset-error', err.message);
+  } finally {
+    resetButton(button, '<i data-lucide="refresh-cw"></i><span>ส่งรหัสอีกครั้ง</span>');
+  }
+  if (retryAfter) startPasswordResetCooldown(retryAfter);
+});
+
+document.getElementById('form-forgot-reset').addEventListener('submit', async e => {
+  e.preventDefault();
+  hideError('forgot-reset-error');
+  const form = e.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const code = document.getElementById('forgot-code').value.trim();
+  const password = document.getElementById('forgot-new-password').value;
+  const confirmPassword = document.getElementById('forgot-confirm-password').value;
+
+  if (!/^\d{6}$/.test(code)) {
+    showError('forgot-reset-error', 'กรุณากรอกรหัสยืนยัน 6 หลัก');
+    return;
+  }
+  if (password.length < 8) {
+    showError('forgot-reset-error', 'รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร');
+    return;
+  }
+  if (password !== confirmPassword) {
+    showError('forgot-reset-error', 'รหัสผ่านใหม่ทั้งสองช่องไม่ตรงกัน');
+    return;
+  }
+  if (!state.passwordResetPhone) {
+    showError('forgot-reset-error', 'ไม่พบเบอร์โทรศัพท์ กรุณาขอรหัสใหม่');
+    return;
+  }
+
+  setButtonLoading(button, 'กำลังบันทึกรหัสผ่าน');
+  try {
+    await api('resetPassword', {
+      phone: state.passwordResetPhone,
+      code,
+      password,
+    });
+    const resetPhone = state.passwordResetPhone;
+    clearPasswordResetCooldown();
+    state.passwordResetPhone = null;
+    document.getElementById('login-phone').value = resetPhone;
+    document.getElementById('login-password').value = '';
+    document.getElementById('login-success').textContent = 'ตั้งรหัสผ่านใหม่สำเร็จ กรุณาเข้าสู่ระบบ';
+    document.getElementById('login-success').classList.remove('hidden');
+    hideError('login-error');
+    form.reset();
+    showForgotPasswordStep('request');
+    showView('view-login');
+  } catch (err) {
+    showError('forgot-reset-error', err.message);
+  } finally {
+    resetButton(button, '<i data-lucide="key-round"></i><span>บันทึกรหัสผ่านใหม่</span>');
   }
 });
 
@@ -626,8 +829,15 @@ document.getElementById('form-register').addEventListener('submit', async e => {
 
 // Navigate between login/register
 document.getElementById('go-register').addEventListener('click', e => { e.preventDefault(); showView('view-register'); });
-document.getElementById('go-login').addEventListener('click',    e => { e.preventDefault(); showView('view-login'); });
-document.getElementById('reg-back').addEventListener('click', () => showView('view-login'));
+document.getElementById('go-login').addEventListener('click', e => {
+  e.preventDefault();
+  hideError('login-success');
+  showView('view-login');
+});
+document.getElementById('reg-back').addEventListener('click', () => {
+  hideError('login-success');
+  showView('view-login');
+});
 
 // Role toggle — show/hide owner-specific fields
 document.querySelectorAll('input[name="role"]').forEach(radio => {
@@ -775,57 +985,91 @@ document.getElementById('btn-matching-home').addEventListener('click', () => {
 });
 
 /** Step 3: Driver proceeds to payment */
-document.getElementById('btn-proceed-payment').addEventListener('click', async () => {
+document.getElementById('btn-proceed-payment').addEventListener('click', async e => {
   if (!state.booking || state.booking.status !== 'arrived') return;
+  const button = e.currentTarget;
+  const confirmButton = document.getElementById('btn-confirm-payment');
+  const bookingId = state.booking.booking_id;
+  setButtonLoading(button, 'กำลังเปิดหน้าชำระเงิน');
+  hideError('payment-error');
+  renderPaymentAmount(BOOKING_AMOUNT);
+  showView('view-payment');
+
   try {
     clearDriverPoll();
     clearCountdown();
 
-    // Create Stripe PaymentIntent via Apps Script
+    if (state.paymentBookingId === bookingId && state.paymentEl) return;
+
+    resetPaymentState();
+    setButtonLoading(confirmButton, 'กำลังโหลดช่องทางชำระเงิน');
     const res = await api('createPaymentIntent', {
-      booking_id: state.booking.booking_id,
-      amount:     BOOKING_AMOUNT,
+      booking_id: bookingId,
+      amount: BOOKING_AMOUNT,
     });
+    if (res.status === 'succeeded') {
+      state.booking.status = 'completed';
+      showView('view-rating');
+      return;
+    }
+
     state.clientSecret = res.client_secret;
-
-    document.getElementById('payment-amount-display').textContent = `฿${BOOKING_AMOUNT.toFixed(2)}`;
-    document.getElementById('payment-total-display').textContent  = `฿${BOOKING_AMOUNT.toFixed(2)}`;
-
-    showView('view-payment');
+    state.paymentBookingId = bookingId;
+    renderPaymentAmount(res.amount);
     await initStripe(state.clientSecret);
+    resetButton(confirmButton, '<i data-lucide="lock-keyhole"></i><span>ชำระเงินอย่างปลอดภัย</span>');
   } catch (err) {
-    alert('ไม่สามารถสร้าง Payment Intent ได้: ' + err.message);
+    showError('payment-error', 'ไม่สามารถเปิดระบบชำระเงินได้: ' + err.message);
+    resetButton(confirmButton, '<i data-lucide="lock-keyhole"></i><span>ชำระเงินอย่างปลอดภัย</span>');
+    confirmButton.disabled = true;
+  } finally {
+    resetButton(button, '<i data-lucide="wallet-cards"></i><span>เจ้าของมาถึงแล้ว ชำระเงิน</span>');
   }
 });
 
 /** Step 4: Confirm payment */
 document.getElementById('btn-confirm-payment').addEventListener('click', async () => {
-  if (!state.stripe || !state.stripeElements) return;
+  if (!state.stripe || !state.stripeElements || !state.booking) return;
   hideError('payment-error');
   const btn = document.getElementById('btn-confirm-payment');
   setButtonLoading(btn, 'กำลังประมวลผล');
 
-  const { error, paymentIntent } = await state.stripe.confirmPayment({
-    elements: state.stripeElements,
-    confirmParams: { return_url: window.location.href },
-    redirect: 'if_required',
-  });
+  try {
+    const { error, paymentIntent } = await state.stripe.confirmPayment({
+      elements: state.stripeElements,
+      confirmParams: { return_url: window.location.href },
+      redirect: 'if_required',
+    });
 
-  if (error) {
-    showError('payment-error', error.message);
-    resetButton(btn, '<i data-lucide="lock-keyhole"></i><span>ชำระเงินอย่างปลอดภัย</span>');
-    return;
-  }
+    if (error) {
+      showError('payment-error', error.message);
+      return;
+    }
+    if (!paymentIntent) throw new Error('Stripe ไม่ส่งสถานะการชำระเงินกลับมา');
 
-  if (paymentIntent && paymentIntent.status === 'succeeded') {
-    // Notify backend
-    try {
-      await api('confirmPayment', { payment_intent_id: paymentIntent.id, status: 'succeeded' });
+    const verification = await api('confirmPayment', {
+      payment_intent_id: paymentIntent.id,
+      status: paymentIntent.status,
+    });
+    const verifiedStatus = verification.status || paymentIntent.status;
+    if (verifiedStatus !== 'succeeded') {
+      showError('payment-error', paymentStatusMessage(verifiedStatus));
+      return;
+    }
+
+    // Older Apps Script deployments did not complete the booking in confirmPayment.
+    if (!verification.status) {
       await api('updateBookingStatus', { booking_id: state.booking.booking_id, status: 'completed' });
-    } catch { /* non-critical */ }
+    }
+
+    state.booking.status = 'completed';
     showView('view-rating');
+    resetPaymentState();
+  } catch (err) {
+    showError('payment-error', 'ไม่สามารถยืนยันการชำระเงินได้: ' + err.message);
+  } finally {
+    resetButton(btn, '<i data-lucide="lock-keyhole"></i><span>ชำระเงินอย่างปลอดภัย</span>');
   }
-  resetButton(btn, '<i data-lucide="lock-keyhole"></i><span>ชำระเงินอย่างปลอดภัย</span>');
 });
 
 /** Payment back button */
@@ -881,6 +1125,7 @@ document.getElementById('btn-submit-rating').addEventListener('click', async () 
     } catch { /* ignore */ }
   }
   state.booking = null;
+  resetPaymentState();
   clearDriverPoll();
   clearCountdown(true);
   selectedRating = 0;

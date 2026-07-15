@@ -12,8 +12,8 @@
 
   <script src="https://js.stripe.com/v3/" defer></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="config.js?v=20260714-match-fix"></script>
-  <link rel="stylesheet" href="style.css?v=20260714-match-fix" />
+  <script src="config.js?v=20260715-sms-reset"></script>
+  <link rel="stylesheet" href="style.css?v=20260715-sms-reset" />
 </head>
 <body>
 
@@ -69,12 +69,16 @@
           <input id="login-phone" type="tel" class="field-input" placeholder="081 234 5678" autocomplete="tel" inputmode="tel" required />
         </div>
 
-        <label class="field-label" for="login-password">รหัสผ่าน</label>
+        <div class="field-label-row">
+          <label class="field-label" for="login-password">รหัสผ่าน</label>
+          <a href="#" id="go-forgot-password">ลืมรหัสผ่าน?</a>
+        </div>
         <div class="field-control">
           <i data-lucide="lock-keyhole"></i>
           <input id="login-password" type="password" class="field-input" placeholder="รหัสผ่านของคุณ" autocomplete="current-password" required />
         </div>
 
+        <div id="login-success" class="form-success hidden" role="status"></div>
         <div id="login-error" class="form-error hidden" role="alert"></div>
 
         <button type="submit" class="btn-primary btn-full">
@@ -83,6 +87,95 @@
       </form>
 
       <p class="auth-switch">ยังไม่มีบัญชี? <a href="#" id="go-register">สมัครสมาชิก</a></p>
+    </main>
+  </div>
+</div>
+
+<div id="view-forgot-password" class="view auth-view">
+  <div class="auth-layout">
+    <aside class="auth-context auth-context-reset">
+      <div class="brand-lockup">
+        <span class="brand-mark"><i data-lucide="square-parking"></i></span>
+        <span class="brand-word">Piakarn</span>
+      </div>
+      <div class="auth-map-graphic" aria-hidden="true">
+        <span class="map-road map-road-a"></span>
+        <span class="map-road map-road-b"></span>
+        <span class="map-road map-road-c"></span>
+        <span class="map-pin map-pin-a"><i data-lucide="message-square-lock"></i></span>
+        <span class="map-pin map-pin-b"><i data-lucide="shield-check"></i></span>
+      </div>
+      <div class="auth-context-copy">
+        <span class="context-index">SMS / IDENTITY CHECK</span>
+        <p>ยืนยันตัวตน<br />ก่อนกลับเข้าสู่ระบบ</p>
+      </div>
+    </aside>
+
+    <main class="auth-wrap auth-wrap-reset">
+      <div class="auth-mobile-brand brand-lockup">
+        <span class="brand-mark"><i data-lucide="square-parking"></i></span>
+        <span class="brand-word">Piakarn</span>
+      </div>
+      <button class="btn-back" id="forgot-back" type="button">
+        <i data-lucide="arrow-left"></i><span>กลับไปเข้าสู่ระบบ</span>
+      </button>
+
+      <section id="forgot-step-request">
+        <p class="section-kicker">กู้คืนบัญชี</p>
+        <h1 class="auth-heading">ลืมรหัสผ่าน</h1>
+        <p class="auth-sub">รับรหัสยืนยันทาง SMS ด้วยเบอร์ที่ลงทะเบียน</p>
+
+        <form id="form-forgot-request" novalidate>
+          <label class="field-label" for="forgot-phone">เบอร์โทรศัพท์</label>
+          <div class="field-control">
+            <i data-lucide="phone"></i>
+            <input id="forgot-phone" type="tel" class="field-input" placeholder="081 234 5678" autocomplete="tel" inputmode="tel" required />
+          </div>
+
+          <div id="forgot-request-error" class="form-error hidden" role="alert"></div>
+          <button type="submit" class="btn-primary btn-full">
+            <i data-lucide="message-square-more"></i><span>ส่งรหัสทาง SMS</span>
+          </button>
+        </form>
+      </section>
+
+      <section id="forgot-step-reset" class="hidden">
+        <p class="section-kicker">ยืนยันเบอร์โทรศัพท์</p>
+        <h1 class="auth-heading">ตั้งรหัสผ่านใหม่</h1>
+        <p class="auth-sub reset-phone-line">กรอกรหัสที่ส่งไปยัง <strong id="forgot-phone-display"></strong></p>
+
+        <form id="form-forgot-reset" novalidate>
+          <label class="field-label" for="forgot-code">รหัสยืนยัน 6 หลัก</label>
+          <div class="field-control">
+            <i data-lucide="message-square-lock"></i>
+            <input id="forgot-code" type="text" class="field-input otp-input" placeholder="000000" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" maxlength="6" required />
+          </div>
+
+          <label class="field-label" for="forgot-new-password">รหัสผ่านใหม่</label>
+          <div class="field-control">
+            <i data-lucide="lock-keyhole"></i>
+            <input id="forgot-new-password" type="password" class="field-input" placeholder="8 ตัวอักษรขึ้นไป" autocomplete="new-password" required />
+          </div>
+
+          <label class="field-label" for="forgot-confirm-password">ยืนยันรหัสผ่านใหม่</label>
+          <div class="field-control">
+            <i data-lucide="badge-check"></i>
+            <input id="forgot-confirm-password" type="password" class="field-input" placeholder="กรอกรหัสผ่านอีกครั้ง" autocomplete="new-password" required />
+          </div>
+
+          <div id="forgot-reset-error" class="form-error hidden" role="alert"></div>
+          <button type="submit" class="btn-primary btn-full">
+            <i data-lucide="key-round"></i><span>บันทึกรหัสผ่านใหม่</span>
+          </button>
+        </form>
+
+        <div class="reset-actions">
+          <button class="btn-link" id="forgot-change-phone" type="button">เปลี่ยนเบอร์โทร</button>
+          <button class="btn-link resend-button" id="forgot-resend-code" type="button">
+            <i data-lucide="refresh-cw"></i><span>ส่งรหัสอีกครั้ง</span>
+          </button>
+        </div>
+      </section>
     </main>
   </div>
 </div>
@@ -479,6 +572,6 @@
   </section>
 </div>
 
-<script src="app.js?v=20260714-match-fix"></script>
+<script src="app.js?v=20260715-reset-form-fix"></script>
 </body>
 </html>
