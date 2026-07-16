@@ -870,7 +870,8 @@ input:focus-visible,
 }
 
 .map-container {
-  position: fixed;
+  /* Google Maps writes position: relative inline; keep the map filling this view. */
+  position: absolute !important;
   inset: var(--nav-h) 0 0;
   background-color: #dce6e1;
   background-image:
