@@ -629,7 +629,7 @@ input:focus-visible,
 .role-check svg { width: 14px; height: 14px; stroke-width: 3; }
 .role-card:has(input:checked) .role-check { display: flex; }
 
-.owner-fields {
+.role-specific-fields {
   margin-top: 18px;
   padding-top: 2px;
   border-top: 1px solid var(--line);
@@ -1591,6 +1591,37 @@ input:focus-visible,
   margin-top: 4px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.driver-plate-detail {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 11px 12px;
+  border: 1px solid #c8d8d1;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.driver-plate-detail svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+  color: var(--primary);
+}
+
+.driver-plate-detail span { min-width: 0; }
+
+.driver-plate-detail strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
 }
 
 .incoming-location {

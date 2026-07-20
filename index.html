@@ -251,13 +251,15 @@
           </div>
         </fieldset>
 
-        <div id="owner-fields" class="owner-fields hidden">
+        <div id="driver-fields" class="role-specific-fields">
           <label class="field-label" for="reg-plate">ทะเบียนรถ</label>
           <div class="field-control">
             <i data-lucide="rectangle-horizontal"></i>
             <input id="reg-plate" type="text" class="field-input" placeholder="กข 1234 กรุงเทพ" />
           </div>
+        </div>
 
+        <div id="owner-fields" class="role-specific-fields hidden">
           <label class="field-label" for="reg-permit">ประเภทสิทธิ์จอดรถ</label>
           <div class="field-control">
             <i data-lucide="badge-check"></i>
@@ -517,6 +519,10 @@
           <div class="incoming-info">
             <h3 class="incoming-title">ผู้ขับขี่ต้องการที่จอด</h3>
             <p class="incoming-driver">อยู่ในพื้นที่ใกล้เคียงและรอการตอบรับ</p>
+            <p class="driver-plate-detail">
+              <i data-lucide="rectangle-horizontal"></i>
+              <span>ทะเบียนรถที่ต้องไปหา <strong id="incoming-driver-plate">กำลังโหลด...</strong></span>
+            </p>
             <p class="incoming-location" id="incoming-location">กำลังโหลดตำแหน่ง...</p>
           </div>
           <div class="incoming-actions">
@@ -533,6 +539,10 @@
             </div>
             <span class="live-pill"><span class="status-dot"></span>LIVE</span>
           </div>
+          <p class="driver-plate-detail">
+            <i data-lucide="rectangle-horizontal"></i>
+            <span>ทะเบียนรถที่ต้องไปหา <strong id="active-driver-plate">กำลังโหลด...</strong></span>
+          </p>
           <div class="active-map" id="map-owner" aria-label="แผนที่ตำแหน่งผู้ขับขี่"></div>
           <button class="btn-primary btn-full" id="btn-owner-arrived" type="button">
             <i data-lucide="map-pin-check"></i><span>ฉันมาถึงแล้ว</span>
@@ -572,6 +582,6 @@
   </section>
 </div>
 
-<script src="app.js?v=20260715-reset-form-fix"></script>
+<script src="app.js?v=20260720-owner-driver-plate"></script>
 </body>
 </html>

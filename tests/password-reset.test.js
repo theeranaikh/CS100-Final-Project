@@ -9,6 +9,11 @@ const USER_HEADERS = [
   'user_id', 'name', 'phone', 'plate', 'role', 'permit_type',
   'password_hash', 'created_at', 'available', 'lat', 'lng', 'last_seen_at'
 ];
+const BOOKING_HEADERS = [
+  'booking_id', 'driver_id', 'owner_id', 'status', 'lat', 'lng',
+  'requested_at', 'matched_at', 'eta_minutes', 'owner_response_at',
+  'arrived_at', 'completed_at', 'rating'
+];
 
 class FakeSheet {
   constructor(headers, objects) {
@@ -67,7 +72,7 @@ function toBuffer(value) {
   return Buffer.from(String(value));
 }
 
-function createHarness({ users, serviceSid = 'VA_service', twilioHandler, demoBypass } = {}) {
+function createHarness({ users, bookings, serviceSid = 'VA_service', twilioHandler, demoBypass } = {}) {
   const sheets = {
     Users: new FakeSheet(USER_HEADERS, users || [{
       user_id: 'u_1',
@@ -75,7 +80,8 @@ function createHarness({ users, serviceSid = 'VA_service', twilioHandler, demoBy
       phone: 812345678,
       role: 'driver',
       password_hash: 'old_hash'
-    }])
+    }]),
+    Bookings: new FakeSheet(BOOKING_HEADERS, bookings || [])
   };
   const properties = new Map([
     ['SHEET_ID', 'sheet_1'],
@@ -137,6 +143,58 @@ test('normalizes local and international Thai mobile numbers', () => {
 
   assert.equal(harness.call('thaiPhoneToE164_("081-234-5678")'), '+66812345678');
   assert.equal(harness.call('phoneLookupKey_("+66 81 234 5678")'), '812345678');
+});
+
+test('stores the plate only for a driver registration', () => {
+  const harness = createHarness({ users: [] });
+
+  const result = harness.call(`register_({
+    name: "Driver",
+    phone: "0812345678",
+    password: "password",
+    role: "driver",
+    plate: "กข 1234 กรุงเทพ",
+    permit_type: "VIP"
+  })`);
+  const user = harness.sheets.Users.objects()[0];
+
+  assert.equal(result.ok, true);
+  assert.equal(user.plate, 'กข 1234 กรุงเทพ');
+  assert.equal(user.permit_type, '');
+});
+
+test('stores the permit type only for an owner registration', () => {
+  const harness = createHarness({ users: [] });
+
+  const result = harness.call(`register_({
+    name: "Owner",
+    phone: "0899999999",
+    password: "password",
+    role: "owner",
+    plate: "กข 1234 กรุงเทพ",
+    permit_type: "VIP"
+  })`);
+  const user = harness.sheets.Users.objects()[0];
+
+  assert.equal(result.ok, true);
+  assert.equal(user.plate, '');
+  assert.equal(user.permit_type, 'VIP');
+});
+
+test('includes the matched driver plate in an owner booking list', () => {
+  const harness = createHarness({
+    users: [{ user_id: 'u_driver', role: 'driver', plate: 'กข 1234 กรุงเทพ' }],
+    bookings: [
+      { booking_id: 'b_1', driver_id: 'u_driver', owner_id: 'u_owner', status: 'matched' },
+      { booking_id: 'b_2', driver_id: 'u_driver', owner_id: 'u_other', status: 'matched' }
+    ]
+  });
+
+  const bookings = harness.call('listBookings_({ owner_id: "u_owner" })');
+
+  assert.equal(bookings.length, 1);
+  assert.equal(bookings[0].booking_id, 'b_1');
+  assert.equal(bookings[0].driver_plate, 'กข 1234 กรุงเทพ');
 });
 
 test('sends a Twilio verification only for a registered phone', () => {

@@ -643,15 +643,19 @@ async function pollOwnerBookings() {
 function showIncomingRequest(booking) {
   const card = document.getElementById('owner-incoming-card');
   const locEl = document.getElementById('incoming-location');
+  const plateEl = document.getElementById('incoming-driver-plate');
   if (!card) return;
   card.classList.remove('hidden');
+  if (plateEl) plateEl.textContent = booking.driver_plate || 'ไม่ระบุทะเบียนรถ';
   if (locEl) locEl.textContent = `พิกัด ${Number(booking.lat).toFixed(4)}, ${Number(booking.lng).toFixed(4)}`;
 }
 
 function showActiveBookingCard(booking) {
   const card = document.getElementById('owner-active-card');
+  const plateEl = document.getElementById('active-driver-plate');
   const shouldInitMap = card && card.classList.contains('hidden');
   if (card) card.classList.remove('hidden');
+  if (plateEl) plateEl.textContent = booking.driver_plate || 'ไม่ระบุทะเบียนรถ';
   if (shouldInitMap && booking.lat && booking.lng) initOwnerMap(Number(booking.lat), Number(booking.lng));
 }
 
@@ -810,8 +814,8 @@ document.getElementById('form-register').addEventListener('submit', async e => {
   const phone    = document.getElementById('reg-phone').value.trim();
   const password = document.getElementById('reg-password').value;
   const role     = document.querySelector('input[name="role"]:checked')?.value || 'driver';
-  const plate    = document.getElementById('reg-plate').value.trim();
-  const permit   = document.getElementById('reg-permit').value.trim();
+  const plate    = role === 'driver' ? document.getElementById('reg-plate').value.trim() : '';
+  const permit   = role === 'owner' ? document.getElementById('reg-permit').value.trim() : '';
   if (!name || !phone || !password) { showError('reg-error', 'กรุณากรอกข้อมูลให้ครบ'); return; }
   if (password.length < 8)          { showError('reg-error', 'รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร'); return; }
   setButtonLoading(submitButton, 'กำลังสร้างบัญชี');
@@ -839,11 +843,14 @@ document.getElementById('reg-back').addEventListener('click', () => {
   showView('view-login');
 });
 
-// Role toggle — show/hide owner-specific fields
+// Role toggle — show only the fields that belong to the selected role
 document.querySelectorAll('input[name="role"]').forEach(radio => {
   radio.addEventListener('change', () => {
+    const driverFields = document.getElementById('driver-fields');
     const ownerFields = document.getElementById('owner-fields');
-    ownerFields.classList.toggle('hidden', radio.value !== 'owner' || !radio.checked);
+    const selectedRole = document.querySelector('input[name="role"]:checked')?.value || 'driver';
+    driverFields.classList.toggle('hidden', selectedRole !== 'driver');
+    ownerFields.classList.toggle('hidden', selectedRole !== 'owner');
   });
 });
 

@@ -194,9 +194,9 @@ function register_(body) {
     user_id: uid_('u'),
     name: body.name,
     phone: phone,
-    plate: body.plate || '',
+    plate: role === 'driver' ? body.plate || '' : '',
     role: role,
-    permit_type: body.permit_type || '',
+    permit_type: role === 'owner' ? body.permit_type || '' : '',
     password_hash: hashPassword_(body.password),
     created_at: new Date().toISOString(),
     available: false,
@@ -546,7 +546,15 @@ function listBookings_(params) {
   const bookings = sheetToObjects_(getSheet_('Bookings'));
   if (params.booking_id) return bookings.filter(b => String(b.booking_id) === String(params.booking_id));
   if (params.driver_id) return bookings.filter(b => String(b.driver_id) === String(params.driver_id));
-  if (params.owner_id) return bookings.filter(b => String(b.owner_id) === String(params.owner_id));
+  if (params.owner_id) {
+    const driverPlates = {};
+    sheetToObjects_(getSheet_('Users'))
+      .filter(user => normalise_(user.role) === 'driver')
+      .forEach(user => driverPlates[String(user.user_id)] = String(user.plate || '').trim());
+    return bookings
+      .filter(b => String(b.owner_id) === String(params.owner_id))
+      .map(b => Object.assign({}, b, { driver_plate: driverPlates[String(b.driver_id)] || '' }));
+  }
   return bookings;
 }
 
